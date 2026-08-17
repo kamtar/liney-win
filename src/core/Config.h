@@ -49,6 +49,7 @@ struct Config {
     bool multiLinePasteWarning = true;      // confirm before pasting multiple lines
     bool rememberLayout = false;            // restore tabs/panes on launch (off by default)
     bool splitUseWorkspaceDir = false;      // new splits open in workspace/home dir (else inherit the pane's cwd)
+    bool powerShellHistoryPerProject = false; // opt-in PSReadLine history per project/worktree
     bool checkForUpdatesOnStartup = true;  // quiet GitHub release check after launch
     std::wstring aiProvider = L"off";      // off | openai | codex | custom
     std::wstring aiModel = L"gpt-5.6-luna";

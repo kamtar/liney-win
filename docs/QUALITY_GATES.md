@@ -23,6 +23,7 @@ Status meanings:
 | Accessibility | Root, toolbar, tabs, workspace tree, file list and live status UIA identity; keyboard paths and terminal TextPattern | TextPattern live-text, semantic chrome hierarchy, live-region and keyboard gate |
 | ConPTY lifecycle | Start/resize/input/output/exit, 50-cycle soak, large output, cancellation, WSL/SSH reconnect | Gate |
 | Shell integration | PowerShell/pwsh/cmd/WSL/Git Bash detection, OSC 7/133, idempotence and conflicting prompt hooks | PowerShell/idempotence gate; cross-shell conflict matrix planned |
+| Per-project PowerShell history | Verify project/worktree identity isolation and interactive Up-arrow recall with the supported pwsh host | Identity unit gate; interactive pwsh 7.6 smoke verified on the build host |
 | TUI applications | vim, less, tmux, htop/btop, fzf, mc and a curses fixture on supported shells | Nightly ConPTY gate for vim/less/fzf; interactive mouse fixtures remain planned |
 
 ## Rendering

@@ -82,6 +82,8 @@ std::string defaultJson(const Config& c) {
     j.set("multiLinePasteWarning", Json::boolean(c.multiLinePasteWarning));
     j.set("rememberLayout", Json::boolean(c.rememberLayout));
     j.set("splitUseWorkspaceDir", Json::boolean(c.splitUseWorkspaceDir));
+    j.set("powerShellHistoryPerProject",
+          Json::boolean(c.powerShellHistoryPerProject));
     j.set("checkForUpdatesOnStartup", Json::boolean(c.checkForUpdatesOnStartup));
     Json ai = Json::object();
     ai.set("provider", Json::str(wideToUtf8(c.aiProvider)));
@@ -328,6 +330,9 @@ Config loadConfig() {
         cfg.rememberLayout = j["rememberLayout"].asBool(false);
     if (j.contains("splitUseWorkspaceDir"))
         cfg.splitUseWorkspaceDir = j["splitUseWorkspaceDir"].asBool(false);
+    if (j.contains("powerShellHistoryPerProject"))
+        cfg.powerShellHistoryPerProject =
+            j["powerShellHistoryPerProject"].asBool(false);
     if (j.contains("checkForUpdatesOnStartup"))
         cfg.checkForUpdatesOnStartup = j["checkForUpdatesOnStartup"].asBool(true);
     if (j["ai"].isObject()) {

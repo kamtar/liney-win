@@ -30,6 +30,46 @@ void add(std::vector<ShellProfile>& out, const wchar_t* id, const wchar_t* name,
     out.push_back({id, name, command});
 }
 
+std::wstring quotePowerShellString(const std::wstring& value) {
+    std::wstring quoted = value;
+    size_t quote = 0;
+    while ((quote = quoted.find(L'\'', quote)) != std::wstring::npos) {
+        quoted.insert(quote, 1, L'\'');
+        quote += 2;
+    }
+    return L"'" + quoted + L"'";
+}
+
+std::wstring historyBootstrap(const std::wstring& historyPath,
+                              const std::wstring& scriptPath) {
+    const std::wstring source = L". " + quotePowerShellString(scriptPath);
+    if (historyPath.empty()) return source;
+    return L"$env:LINEY_PSREADLINE_HISTORY_PATH = " +
+           quotePowerShellString(historyPath) + L"; " + source;
+}
+
+std::wstring addHistoryToPreparedCommand(const std::wstring& command,
+                                         const std::wstring& historyPath) {
+    if (historyPath.empty()) return command;
+    std::wstring lower = command;
+    for (wchar_t& ch : lower) ch = static_cast<wchar_t>(towlower(ch));
+    // Layouts written by an older Liney may already contain the integration
+    // command. Reuse them, but inject the new per-session setting into the
+    // existing -Command payload. New commands are generated with the marker
+    // below and are already idempotent.
+    if (lower.find(L"liney_psreadline_history_path") != std::wstring::npos)
+        return command;
+    const size_t option = lower.find(L"-command");
+    if (option == std::wstring::npos) return command;
+    const size_t openingQuote = command.find(L'\"', option);
+    if (openingQuote == std::wstring::npos) return command;
+    const std::wstring assignment =
+        L"$env:LINEY_PSREADLINE_HISTORY_PATH = " +
+        quotePowerShellString(historyPath) + L"; ";
+    return command.substr(0, openingQuote + 1) + assignment +
+           command.substr(openingQuote + 1);
+}
+
 } // namespace
 
 std::vector<ShellProfile> discoverShellProfiles() {
@@ -59,13 +99,27 @@ std::vector<ShellProfile> discoverShellProfiles() {
     return out;
 }
 
-std::wstring prepareShellCommand(const std::wstring& command) {
+std::wstring powerShellHistoryPath(const std::wstring& projectPath,
+                                   const std::wstring& worktreePath) {
+    const std::wstring fileName =
+        powerShellHistoryFileName(projectPath, worktreePath);
+    if (fileName.empty()) return L"";
+    const std::wstring dir = configDir();
+    if (dir.empty()) return L"";
+    const std::wstring historyDir = dir + L"\\powershell-history";
+    CreateDirectoryW(historyDir.c_str(), nullptr);
+    return historyDir + L"\\" + fileName;
+}
+
+std::wstring prepareShellCommand(const std::wstring& command,
+                                 const std::wstring& historyPath) {
     std::wstring lower = command;
     for (wchar_t& ch : lower) ch = static_cast<wchar_t>(towlower(ch));
     const bool powershell = lower.find(L"pwsh.exe") != std::wstring::npos ||
                             lower.find(L"powershell.exe") != std::wstring::npos;
-    if (!powershell || lower.find(L"liney-shell-integration.ps1") !=
-                           std::wstring::npos) return command;
+    if (!powershell) return command;
+    if (lower.find(L"liney-shell-integration.ps1") != std::wstring::npos)
+        return addHistoryToPreparedCommand(command, historyPath);
 
     const std::wstring dir = configDir();
     if (dir.empty()) return command;
@@ -75,9 +129,19 @@ if ($env:LINEY_SHELL_INTEGRATION_ACTIVE) { return }
 $env:LINEY_SHELL_INTEGRATION_ACTIVE = '1'
 $script:LineyEsc = [char]27
 $script:LineyOriginalPrompt = $function:prompt
-function script:Install-LineyEnterHandler {
-    if ($script:LineyEnterHandlerInstalled -or
-        -not (Get-Module -Name PSReadLine)) { return }
+function script:Install-LineyReadLineOptions {
+    if (-not (Get-Module -Name PSReadLine)) { return }
+    if ($env:LINEY_PSREADLINE_HISTORY_PATH -and
+        -not $script:LineyHistoryPathInstalled) {
+        try {
+            Set-PSReadLineOption -HistorySavePath $env:LINEY_PSREADLINE_HISTORY_PATH
+            $script:LineyHistoryPathInstalled = $true
+        } catch {
+            # Older PSReadLine builds may not expose HistorySavePath. Keep the
+            # normal global history rather than breaking the prompt.
+        }
+    }
+    if ($script:LineyEnterHandlerInstalled) { return }
     Set-PSReadLineKeyHandler -Key Enter -ScriptBlock {
         [Console]::Write("$script:LineyEsc]133;C$script:LineyEsc\")
         [Microsoft.PowerShell.PSConsoleReadLine]::AcceptLine()
@@ -88,7 +152,7 @@ function global:prompt {
     # PSReadLine is commonly imported after a -Command bootstrap script runs.
     # Install the handler lazily from the first prompt so command-start OSC 133
     # markers are present on both Windows PowerShell and PowerShell 7.
-    Install-LineyEnterHandler
+    Install-LineyReadLineOptions
     $code = if ($null -eq $global:LASTEXITCODE) { 0 } else { $global:LASTEXITCODE }
     $cwd = (Get-Location).Path.Replace('\', '/')
     [Console]::Write("$script:LineyEsc]133;D;$code$script:LineyEsc\")
@@ -97,18 +161,13 @@ function global:prompt {
     $text = if ($script:LineyOriginalPrompt) { & $script:LineyOriginalPrompt } else { "PS $cwd> " }
     return "$text$script:LineyEsc]133;B$script:LineyEsc\"
 }
-Install-LineyEnterHandler
+try { Import-Module PSReadLine -ErrorAction Stop } catch { }
+Install-LineyReadLineOptions
 )PS1";
     if (!writeFileAtomic(path, script)) return command;
     // -NoExit keeps the profile interactive after the bootstrap command.
-    std::wstring quotedPath = path;
-    size_t quote = 0;
-    while ((quote = quotedPath.find(L'\'', quote)) != std::wstring::npos) {
-        quotedPath.insert(quote, 1, L'\'');
-        quote += 2;
-    }
-    return command + L" -NoLogo -ExecutionPolicy Bypass -NoExit -Command \". '" +
-           quotedPath + L"'\"";
+    return command + L" -NoLogo -ExecutionPolicy Bypass -NoExit -Command \"" +
+           historyBootstrap(historyPath, path) + L"\"";
 }
 
 } // namespace liney

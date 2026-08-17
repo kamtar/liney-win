@@ -9,6 +9,7 @@
   "unixTools": true,
   "copyOnSelect": false,
   "multiLinePasteWarning": true,
+  "powerShellHistoryPerProject": false,
   "osc52Clipboard": "ask",
   "ai": {
     "provider": "off",

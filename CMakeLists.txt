@@ -47,6 +47,7 @@ add_executable(liney_win WIN32
   src/app/BuiltinIcons.cpp
   src/core/TerminalSession.cpp
   src/core/Config.cpp
+  src/core/PowerShellHistory.cpp
   src/core/ShellProfiles.cpp
   src/core/Shutdown.cpp
   src/core/KeyBinding.cpp

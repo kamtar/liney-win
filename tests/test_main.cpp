@@ -26,6 +26,7 @@
 #include "core/WindowGeometry.h"
 #include "core/Ai.h"
 #include "core/CommandPalette.h"
+#include "core/PowerShellHistory.h"
 
 namespace {
 
@@ -596,6 +597,35 @@ void testKeyBindings() {
     check(!liney::parseKeyChord(L"Ctrl+Hyper", chord), "rejects unknown key");
 }
 
+void testPowerShellHistoryIdentity() {
+    std::printf("PowerShell project history identity\n");
+    const auto project = liney::powerShellHistoryIdentity(
+        L"C:\\Work\\Liney", L"");
+    const auto projectWithSlash = liney::powerShellHistoryIdentity(
+        L"c:/work/liney/", L"");
+    check(project == L"project:c:\\work\\liney",
+          "project identity normalizes separators and case");
+    check(project == projectWithSlash,
+          "equivalent project paths share one identity");
+
+    const auto worktree = liney::powerShellHistoryIdentity(
+        L"C:\\Work\\Liney", L"C:\\Work\\Liney\\.worktrees\\feature");
+    check(worktree == L"worktree:c:\\work\\liney\\.worktrees\\feature",
+          "worktree identity takes precedence over the project");
+
+    const auto projectFile = liney::powerShellHistoryFileName(
+        L"C:\\Work\\Liney", L"");
+    const auto worktreeFile = liney::powerShellHistoryFileName(
+        L"C:\\Work\\Liney", L"C:\\Work\\Liney\\.worktrees\\feature");
+    check(!projectFile.empty() && projectFile.ends_with(L".txt"),
+          "project history file has a stable text extension");
+    check(!worktreeFile.empty() && worktreeFile.ends_with(L".txt") &&
+              projectFile != worktreeFile,
+          "project and worktree histories use separate files");
+    check(liney::powerShellHistoryFileName(L"", L"").empty(),
+          "sessions without workspace identity keep global history");
+}
+
 void testSshProfiles() {
     std::printf("Secure SSH profiles\n");
     check(liney::validSshHost(L"user@example.com"), "accepts user and DNS host");
@@ -636,6 +666,7 @@ int main() {
     testBase64();
     testDeterministicFuzzSmoke();
     testKeyBindings();
+    testPowerShellHistoryIdentity();
     testSshProfiles();
     testUpdatePolicy();
     testAiSafety();

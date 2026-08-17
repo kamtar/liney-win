@@ -249,6 +249,7 @@ bool Window::create(HINSTANCE hInstance, const wchar_t* title, int width,
     multiLinePasteWarning_ = cfg.multiLinePasteWarning;
     rememberLayout_ = cfg.rememberLayout;
     splitUseWorkspaceDir_ = cfg.splitUseWorkspaceDir;
+    powerShellHistoryPerProject_ = cfg.powerShellHistoryPerProject;
 #ifdef LINEY_STORE_BUILD
     checkForUpdatesOnStartup_ = false;
 #else
@@ -1201,7 +1202,49 @@ void Window::cellsForRect(const Rect& r, int& cols, int& rows) const {
     if (rows < 1) rows = 1;
 }
 
-void Window::newTab(const std::wstring& cwd) { newTabShell(shell_, cwd); }
+SessionContext Window::contextForWorkspacePath(const std::wstring& path) const {
+    SessionContext result;
+    const std::wstring target = normalizeWorkspacePath(path);
+    if (target.empty()) return result;
+
+    auto contains = [](const std::wstring& base,
+                       const std::wstring& candidate) {
+        const std::wstring root = normalizeWorkspacePath(base);
+        if (root.empty() || candidate.empty()) return false;
+        if (_wcsicmp(root.c_str(), candidate.c_str()) == 0) return true;
+        if (candidate.size() <= root.size() ||
+            _wcsnicmp(root.c_str(), candidate.c_str(), root.size()) != 0)
+            return false;
+        return candidate[root.size()] == L'\\';
+    };
+
+    // Prefer the most specific loaded worktree, then fall back to the repo's
+    // main worktree. This also lets a new tab opened from a subdirectory keep
+    // the same project history as its parent pane.
+    size_t bestLength = 0;
+    for (const Repo& repo : workspace_.repos()) {
+        for (const Worktree& worktree : repo.worktrees) {
+            const std::wstring root = normalizeWorkspacePath(worktree.path);
+            if (root.size() <= bestLength || !contains(root, target)) continue;
+            result.projectPath = repo.path;
+            result.worktreePath = worktree.path;
+            bestLength = root.size();
+        }
+        const std::wstring root = normalizeWorkspacePath(repo.path);
+        if (root.size() <= bestLength || !contains(root, target)) continue;
+        result.projectPath = repo.path;
+        if (repo.isGit()) result.worktreePath = repo.path;
+        bestLength = root.size();
+    }
+    return result;
+}
+
+void Window::newTab(const std::wstring& cwd, const SessionContext& context) {
+    SessionContext actual = context;
+    if (actual.projectPath.empty() && actual.worktreePath.empty())
+        actual = contextForWorkspacePath(cwd);
+    newTabShell(shell_, cwd, actual);
+}
 
 TerminalSession* Window::openWorkspaceSession(
     const std::wstring& path, const std::wstring& projectPath,
@@ -1228,27 +1271,34 @@ TerminalSession* Window::openWorkspaceSession(
         }
     }
 
-    TerminalSession* session = newTabShell(shell_, path);
-    if (session) {
-        SessionContext context;
-        context.projectPath = projectPath;
-        context.worktreePath = worktreePath;
-        session->setContext(std::move(context));
-    }
-    return session;
+    SessionContext context;
+    context.projectPath = projectPath;
+    context.worktreePath = worktreePath;
+    return newTabShell(shell_, path, context);
 }
 
 TerminalSession* Window::newTabShell(const std::wstring& shellCmd,
-                                     const std::wstring& cwd) {
+                                      const std::wstring& cwd,
+                                      const SessionContext& context) {
     clearSelection();
     Rect leftBar, rightPanel, tabBar, panes;
     regions(leftBar, rightPanel, tabBar, panes);
     int cols = 80, rows = 24;
     cellsForRect(panes, cols, rows);
 
+    SessionContext actualContext = context;
+    if (actualContext.projectPath.empty() && actualContext.worktreePath.empty())
+        actualContext = contextForWorkspacePath(cwd);
     auto session = std::make_unique<TerminalSession>();
-    const std::wstring preparedShell = prepareShellCommand(shellCmd);
+    const std::wstring historyPath = powerShellHistoryPerProject_
+        ? powerShellHistoryPath(actualContext.projectPath,
+                                actualContext.worktreePath)
+        : L"";
+    const std::wstring preparedShell =
+        prepareShellCommand(shellCmd, historyPath);
     if (!session->start(preparedShell, cwd, cols, rows, scrollback_)) return nullptr;
+    session->setShellCommandForPersistence(shellCmd);
+    session->setContext(actualContext);
     session->setTheme(theme_);
     runStartHook(session.get());
     TerminalSession* created = session.get();
@@ -1299,7 +1349,17 @@ void Window::splitActive(SplitDir dir) {
     const std::wstring cwd =
         splitUseWorkspaceDir_ ? defaultStartDir() : a->session->cwd();
     auto session = std::make_unique<TerminalSession>();
-    if (!session->start(shell_, cwd, cols, rows, scrollback_)) return;
+    SessionContext context = a->session->context();
+    if (splitUseWorkspaceDir_)
+        context = contextForWorkspacePath(cwd);
+    const std::wstring historyPath = powerShellHistoryPerProject_
+        ? powerShellHistoryPath(context.projectPath, context.worktreePath)
+        : L"";
+    if (!session->start(prepareShellCommand(shell_, historyPath), cwd, cols,
+                        rows, scrollback_))
+        return;
+    session->setShellCommandForPersistence(shell_);
+    session->setContext(context);
     session->setTheme(theme_);
     runStartHook(session.get());
     t->splitActive(dir, std::move(session));
@@ -1552,6 +1612,7 @@ void Window::openSettingsDialog() {
     v.unixTools = unixToolsEnabled_;
     v.rememberLayout = rememberLayout_;
     v.splitUseWorkspaceDir = splitUseWorkspaceDir_;
+    v.powerShellHistoryPerProject = powerShellHistoryPerProject_;
     v.checkForUpdatesOnStartup = checkForUpdatesOnStartup_;
     v.aiProvider = aiProvider_;
     v.aiModel = aiModel_;
@@ -1574,6 +1635,7 @@ void Window::openSettingsDialog() {
     multiLinePasteWarning_ = v.multiLinePasteWarning;
     rememberLayout_ = v.rememberLayout;
     splitUseWorkspaceDir_ = v.splitUseWorkspaceDir;
+    powerShellHistoryPerProject_ = v.powerShellHistoryPerProject;
 #ifdef LINEY_STORE_BUILD
     checkForUpdatesOnStartup_ = false;
 #else
@@ -1632,6 +1694,8 @@ void Window::openSettingsDialog() {
         j.set("unixTools", Json::boolean(unixToolsEnabled_));
         j.set("rememberLayout", Json::boolean(rememberLayout_));
         j.set("splitUseWorkspaceDir", Json::boolean(splitUseWorkspaceDir_));
+        j.set("powerShellHistoryPerProject",
+              Json::boolean(powerShellHistoryPerProject_));
 #ifndef LINEY_STORE_BUILD
         j.set("checkForUpdatesOnStartup", Json::boolean(checkForUpdatesOnStartup_));
 #endif
@@ -1836,11 +1900,16 @@ void Window::restartSession(TerminalSession* session) {
     int cols = 80, rows = 24;
     cellsForRect(target->rect, cols, rows);
     auto replacement = std::make_unique<TerminalSession>();
-    if (!replacement->start(shell, cwd, cols, rows, scrollback_)) {
+    const std::wstring historyPath = powerShellHistoryPerProject_
+        ? powerShellHistoryPath(context.projectPath, context.worktreePath)
+        : L"";
+    if (!replacement->start(prepareShellCommand(shell, historyPath), cwd, cols,
+                            rows, scrollback_)) {
         MessageBoxW(hwnd_, L"The shell could not be restarted.", L"Liney",
                     MB_OK | MB_ICONERROR);
         return;
     }
+    replacement->setShellCommandForPersistence(shell);
     replacement->setContext(context);
     replacement->setTheme(theme_);
     target->session = std::move(replacement);

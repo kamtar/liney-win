@@ -375,13 +375,8 @@ void Window::onMouseDownRight(int xi, int yi) {
             DestroyMenu(menu);
             if (cmd == 4) {
                 rememberRecentProject(repo.path);
-                newTab(repo.path);
-                if (TerminalSession* session = activeSession()) {
-                    SessionContext context;
-                    context.projectPath = repo.path;
-                    if (repo.isGit()) context.worktreePath = repo.path;
-                    session->setContext(std::move(context));
-                }
+                openWorkspaceSession(repo.path, repo.path,
+                                     repo.isGit() ? repo.path : L"");
             } else if (cmd == 5) {
                 ShellExecuteW(hwnd_, L"open", repo.path.c_str(), nullptr,
                               nullptr, SW_SHOWNORMAL);
@@ -412,13 +407,7 @@ void Window::onMouseDownRight(int xi, int yi) {
                 std::wstring path = workspace_.addWorktree(repo, name, &err);
                 if (!path.empty()) {
                     rememberRecentProject(path);
-                    newTab(path);
-                    if (TerminalSession* session = activeSession()) {
-                        SessionContext context;
-                        context.projectPath = repo.path;
-                        context.worktreePath = path;
-                        session->setContext(std::move(context));
-                    }
+                    openWorkspaceSession(path, repo.path, path);
                 }
                 else {
                     std::wstring msg = L"git worktree add failed.";
@@ -495,13 +484,7 @@ void Window::onMouseDownRight(int xi, int yi) {
             DestroyMenu(worktreeMenu);
             if (action == 10) {
                 rememberRecentProject(worktreePath);
-                newTab(worktreePath);
-                if (TerminalSession* session = activeSession()) {
-                    SessionContext context;
-                    context.projectPath = repo.path;
-                    context.worktreePath = worktreePath;
-                    session->setContext(std::move(context));
-                }
+                openWorkspaceSession(worktreePath, repo.path, worktreePath);
             } else if (action == 11) {
                 if (TerminalSession* session = newTabShell(
                         L"git -C \"" + worktreePath + L"\" diff",

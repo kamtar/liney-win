@@ -118,6 +118,9 @@ nothing but the OS.
   and inspect exit status/duration from the pane menu
 - **Searchable local command history**: bounded, secret-redacted, and inserts a
   selected result for review without executing it
+- **Optional per-project PowerShell history**: when enabled, PSReadLine writes
+  separate history files for each project/worktree; the default keeps the
+  user's normal global PowerShell history
 - **Named workspace snapshots** and isolated Agent worktrees with Git/test/review
   actions; Agent sessions remain available after exit for inspection
 - **Fuzzy command palette** (`Ctrl+Shift+P`) searches actions, shell profiles,
@@ -218,6 +221,7 @@ The first run writes `%USERPROFILE%\.liney\config.json` (mirroring macOS liney's
   "unixTools": true,
   "copyOnSelect": false,
   "multiLinePasteWarning": true,
+  "powerShellHistoryPerProject": false,
   "ai": { "provider": "off", "model": "gpt-5.6-luna", "endpoint": "https://api.openai.com/v1/responses", "includeCwd": false },
   "hooks": { "sessionStart": "", "sessionExit": "", "appExit": "" },
   "sshHosts": ["user@host"],
@@ -237,6 +241,7 @@ The first run writes `%USERPROFILE%\.liney\config.json` (mirroring macOS liney's
 | `unixTools` | Append Git's `usr\bin` to PATH so `ls`/`cat`/`grep`/… work |
 | `copyOnSelect` | Copy to the clipboard as soon as a selection ends (PuTTY-style) |
 | `multiLinePasteWarning` | Confirm before pasting text with line breaks (each break runs as Enter) |
+| `powerShellHistoryPerProject` | Opt into separate PSReadLine history files under `%USERPROFILE%\.liney\powershell-history` for each project/worktree; default `false` preserves the shell's normal history path |
 | `fontFamily` / `fontSize` | Terminal font; the ☰ → **Font…** picker, `Ctrl +/-/0` and `Ctrl+Wheel` update and persist them |
 | `fontLigatures` | Opt-in DirectWrite shaping for common programming operators; off by default for strict cell compatibility |
 | `scrollback` | History lines retained per session (default 10000) |

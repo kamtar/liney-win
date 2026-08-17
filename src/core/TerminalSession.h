@@ -123,6 +123,11 @@ public:
     const std::wstring& cwd() const { return cwd_; }
     const std::wstring& title() const { return title_; }
     const std::wstring& shellCommand() const { return shell_; }
+    // Keep the unprepared command for layout persistence and restart. The
+    // running PTY may contain Liney's PowerShell bootstrap arguments.
+    void setShellCommandForPersistence(std::wstring command) {
+        shell_ = std::move(command);
+    }
     const SessionContext& context() const { return context_; }
     void setContext(SessionContext context) { context_ = std::move(context); }
     const std::vector<CommandBlock>& commandBlocks() const { return commandBlocks_; }

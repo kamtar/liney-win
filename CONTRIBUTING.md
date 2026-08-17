@@ -83,9 +83,13 @@ tools/        build.ps1, packaging (make-portable / make-installer / make-msix),
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools\make-portable.ps1    # portable zip (+ ghostty-vt.dll)
 powershell -ExecutionPolicy Bypass -File tools\make-installer.ps1   # NSIS setup (needs makensis)
+powershell -ExecutionPolicy Bypass -File tools\validate-packaging.ps1 # path/manifest checks; no build
 ```
 
 Both accept `-BuildDir <dir>` to package from an existing build.
+The expected release outputs are `dist\liney-setup.exe` and
+`dist\liney-portable.zip`; the validation command checks these names and the
+NSIS/Release-workflow references without invoking either packager.
 
 ## Releasing
 

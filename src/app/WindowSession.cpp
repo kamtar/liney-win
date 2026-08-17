@@ -492,12 +492,9 @@ std::unique_ptr<Pane> Window::paneFromJson(const Json& j, int cols, int rows) {
     const std::wstring cwd = utf8ToWide(j["cwd"].asString());
     std::wstring shell = utf8ToWide(j["shell"].asString());
     if (shell.empty()) shell = shell_;
-    shell = prepareShellCommand(shell);
-    auto s = std::make_unique<TerminalSession>();
-    if (!s->start(shell, cwd, cols, rows, scrollback_)) return nullptr;
+    SessionContext context;
     const Json& c = j["context"];
     if (c.isObject()) {
-        SessionContext context;
         const std::string role = c["role"].asString();
         context.role = role == "agent" ? SessionRole::Agent :
                        role == "ssh" ? SessionRole::Ssh : SessionRole::Shell;
@@ -506,8 +503,20 @@ std::unique_ptr<Pane> Window::paneFromJson(const Json& j, int cols, int rows) {
         context.taskName = utf8ToWide(c["taskName"].asString());
         context.agentName = utf8ToWide(c["agentName"].asString());
         context.testCommand = utf8ToWide(c["testCommand"].asString());
-        s->setContext(std::move(context));
     }
+    // Older layout files did not persist session context. Recover a project
+    // identity from the saved cwd when possible so enabling this setting also
+    // works for those restored layouts.
+    if (context.projectPath.empty() && context.worktreePath.empty())
+        context = contextForWorkspacePath(cwd);
+    const std::wstring historyPath = powerShellHistoryPerProject_
+        ? powerShellHistoryPath(context.projectPath, context.worktreePath)
+        : L"";
+    const std::wstring preparedShell = prepareShellCommand(shell, historyPath);
+    auto s = std::make_unique<TerminalSession>();
+    if (!s->start(preparedShell, cwd, cols, rows, scrollback_)) return nullptr;
+    s->setShellCommandForPersistence(shell);
+    s->setContext(std::move(context));
     s->setTheme(theme_);
     auto p = std::make_unique<Pane>();
     p->session = std::move(s);

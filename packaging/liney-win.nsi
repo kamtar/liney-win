@@ -6,14 +6,14 @@
 ;   APPVERSION  e.g. 0.1.0
 ;   WINEXE      full path to Liney.exe (GUI + built-in notify CLI)
 ;   ICONFILE    full path to res\liney.ico
-;   OUTFILE     full path to the output Setup.exe
+;   OUTFILE     full path to the output liney-setup.exe
 
 Unicode true
 !ifndef APPVERSION
   !define APPVERSION "0.10.8"
 !endif
 !ifndef OUTFILE
-  !define OUTFILE "liney-Setup.exe"
+  !define OUTFILE "liney-setup.exe"
 !endif
 
 Name "Liney"

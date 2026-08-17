@@ -50,4 +50,7 @@ $out = Join-Path $dist 'liney-setup.exe'
     "/DOUTFILE=$out" `
     $nsi | Out-Host
 if ($LASTEXITCODE -ne 0) { throw "makensis failed ($LASTEXITCODE)" }
+if (-not (Test-Path -LiteralPath $out -PathType Leaf)) {
+    throw "NSIS did not create the expected installer: $out"
+}
 Write-Host "Installer: $out"

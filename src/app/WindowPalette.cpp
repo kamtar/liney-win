@@ -326,30 +326,11 @@ void Window::executePaletteAction(int id) {
         if (i < recentProjects_.size()) {
             const std::wstring path = recentProjects_[i];
             rememberRecentProject(path);
-            newTab(path);
-            if (TerminalSession* session = activeSession()) {
-                bool matched = false;
-                for (const Repo& project : workspace_.repos()) {
-                    if (workspacePathsEqual(project.path, path)) {
-                        SessionContext context;
-                        context.projectPath = project.path;
-                        if (project.isGit()) context.worktreePath = path;
-                        session->setContext(std::move(context));
-                        matched = true;
-                        break;
-                    }
-                    for (const Worktree& worktree : project.worktrees) {
-                        if (!workspacePathsEqual(worktree.path, path)) continue;
-                        SessionContext context;
-                        context.projectPath = project.path;
-                        context.worktreePath = worktree.path;
-                        session->setContext(std::move(context));
-                        matched = true;
-                        break;
-                    }
-                    if (matched) break;
-                }
-            }
+            const SessionContext context = contextForWorkspacePath(path);
+            openWorkspaceSession(
+                path,
+                context.projectPath.empty() ? path : context.projectPath,
+                context.worktreePath);
         }
         return;
     }
@@ -370,14 +351,8 @@ void Window::executePaletteAction(int id) {
         const size_t i = static_cast<size_t>(id - 10000);
         if (i < repos.size()) {
             rememberRecentProject(repos[i].path);
-            newTab(repos[i].path);
-            if (TerminalSession* session = activeSession()) {
-                SessionContext context;
-                context.projectPath = repos[i].path;
-                if (repos[i].isGit())
-                    context.worktreePath = repos[i].path;
-                session->setContext(std::move(context));
-            }
+            openWorkspaceSession(repos[i].path, repos[i].path,
+                                 repos[i].isGit() ? repos[i].path : L"");
         }
         return;
     }
@@ -387,13 +362,8 @@ void Window::executePaletteAction(int id) {
         const size_t j = static_cast<size_t>(packed % 100);
         if (i < repos.size() && j < repos[i].worktrees.size()) {
             rememberRecentProject(repos[i].worktrees[j].path);
-            newTab(repos[i].worktrees[j].path);
-            if (TerminalSession* session = activeSession()) {
-                SessionContext context;
-                context.projectPath = repos[i].path;
-                context.worktreePath = repos[i].worktrees[j].path;
-                session->setContext(std::move(context));
-            }
+            openWorkspaceSession(repos[i].worktrees[j].path, repos[i].path,
+                                 repos[i].worktrees[j].path);
         }
         return;
     }

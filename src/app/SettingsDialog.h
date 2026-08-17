@@ -25,6 +25,7 @@ struct SettingsValues {
     bool unixTools = true;           // add Git's usr/bin to PATH for shells
     bool rememberLayout = false;     // restore tabs/panes on launch
     bool splitUseWorkspaceDir = false;  // splits open in workspace/home dir
+    bool powerShellHistoryPerProject = false; // PSReadLine history per project/worktree
     bool checkForUpdatesOnStartup = true;
     std::wstring aiProvider;
     std::wstring aiModel;

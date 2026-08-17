@@ -68,11 +68,15 @@ private:
     Tab* activeTab() const;
     TerminalSession* activeSession() const;
     void cellsForRect(const Rect& r, int& cols, int& rows) const;
-    void newTab(const std::wstring& cwd);
-    TerminalSession* newTabShell(const std::wstring& shellCmd, const std::wstring& cwd);
+    void newTab(const std::wstring& cwd,
+                const SessionContext& context = SessionContext{});
+    TerminalSession* newTabShell(
+        const std::wstring& shellCmd, const std::wstring& cwd,
+        const SessionContext& context = SessionContext{});
     TerminalSession* openWorkspaceSession(const std::wstring& path,
                                           const std::wstring& projectPath,
                                           const std::wstring& worktreePath = L"");
+    SessionContext contextForWorkspacePath(const std::wstring& path) const;
     void splitActive(SplitDir dir);
     void toggleZoom();     // Ctrl+Shift+Z: maximize/restore the active pane
     void equalizePanes();  // reset all split ratios evenly
@@ -373,6 +377,7 @@ private:
     bool multiLinePasteWarning_ = true;  // confirm before pasting multiple lines
     bool rememberLayout_ = false;  // restore tabs/panes on launch (opt-in)
     bool splitUseWorkspaceDir_ = false;  // splits open in workspace/home dir vs inherit
+    bool powerShellHistoryPerProject_ = false; // opt-in PSReadLine project history
     Osc52Policy osc52Clipboard_ = Osc52Policy::Ask;
     bool unixToolsEnabled_ = true; // Git's usr/bin appended to shells' PATH
     int mouseButtonsDown_ = 0;     // forwarded-to-app buttons, bitmask by number

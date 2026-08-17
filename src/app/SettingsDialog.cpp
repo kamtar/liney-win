@@ -39,6 +39,7 @@ constexpr int kIdAiCwd = 116;
 constexpr int kIdLigatures = 117;
 constexpr int kIdOpenConfig = 118;
 constexpr int kIdResetPage = 119;
+constexpr int kIdPowerShellHistory = 120;
 constexpr int kIdPageAppearance = 201;
 constexpr int kIdPageTerminal = 202;
 constexpr int kIdPageWorkspace = 203;
@@ -57,6 +58,7 @@ struct State {
     HWND unixTools = nullptr;
     HWND rememberLayout = nullptr;
     HWND splitWorkspaceDir = nullptr;
+    HWND powerShellHistory = nullptr;
     HWND autoUpdate = nullptr;
     HWND aiProvider = nullptr;
     HWND aiModel = nullptr;
@@ -122,6 +124,7 @@ void resetActivePage(State* st) {
         SendMessageW(st->unixTools, BM_SETCHECK, BST_CHECKED, 0);
         SendMessageW(st->rememberLayout, BM_SETCHECK, BST_UNCHECKED, 0);
         SendMessageW(st->splitWorkspaceDir, BM_SETCHECK, BST_UNCHECKED, 0);
+        SendMessageW(st->powerShellHistory, BM_SETCHECK, BST_UNCHECKED, 0);
 #ifndef LINEY_STORE_BUILD
         SendMessageW(st->autoUpdate, BM_SETCHECK, BST_CHECKED, 0);
 #endif
@@ -421,7 +424,7 @@ bool showSettingsDialog(HWND owner, SettingsValues& v) {
     // Size the window so the *client* area is exactly W × contentH.
     // Four focused pages keep the dialog short enough for 200% DPI laptops;
     // the previous 700-DIP single page exceeded their working area.
-    const int contentH = 350;
+    const int contentH = 376;
     RECT wr{ 0, 0, S(W), S(contentH) };
     const DWORD style = WS_POPUP | WS_CAPTION | WS_SYSMENU;
     AdjustWindowRectExForDpi(&wr, style, FALSE, WS_EX_DLGMODALFRAME, dpi);
@@ -594,6 +597,11 @@ bool showSettingsDialog(HWND owner, SettingsValues& v) {
         L"New splits open in the workspace / home dir (else inherit the pane's)",
         v.splitUseWorkspaceDir, r);
     r += 22;
+    st.powerShellHistory = checkbox(
+        kIdPowerShellHistory,
+        L"Separate PowerShell history per project / worktree",
+        v.powerShellHistoryPerProject, r);
+    r += 22;
 #ifndef LINEY_STORE_BUILD
     st.autoUpdate = checkbox(
         kIdAutoUpdate, L"Check for stable updates when Liney starts",
@@ -646,18 +654,18 @@ bool showSettingsDialog(HWND owner, SettingsValues& v) {
     st.buildingPage = -1;
     // ---- OK / Cancel ------------------------------------------------------
     st.validation = mk(0, L"STATIC", L"",
-                       WS_CHILD | SS_RIGHT, M, 286,
+                       WS_CHILD | SS_RIGHT, M, 312,
                        ctrlR - M - 230, 18, -1);
     mk(0, L"BUTTON", L"Open config",
-       WS_CHILD | WS_VISIBLE | WS_TABSTOP, M, 310, 92, 28, kIdOpenConfig);
+       WS_CHILD | WS_VISIBLE | WS_TABSTOP, M, 336, 92, 28, kIdOpenConfig);
     mk(0, L"BUTTON", L"Reset page",
-       WS_CHILD | WS_VISIBLE | WS_TABSTOP, M + 102, 310, 92, 28,
+       WS_CHILD | WS_VISIBLE | WS_TABSTOP, M + 102, 336, 92, 28,
        kIdResetPage);
     mk(0, L"BUTTON", L"OK",
-       WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON, ctrlR - 178, 310,
+       WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON, ctrlR - 178, 336,
        84, 28, IDOK);
     mk(0, L"BUTTON", L"Cancel", WS_CHILD | WS_VISIBLE | WS_TABSTOP, ctrlR - 84,
-       310, 84, 28, IDCANCEL);
+       336, 84, 28, IDCANCEL);
 
     // A real Segoe UI font at the monitor's DPI — the biggest single upgrade
     // over the legacy bitmap DEFAULT_GUI_FONT.
@@ -738,6 +746,8 @@ bool showSettingsDialog(HWND owner, SettingsValues& v) {
             SendMessageW(st.rememberLayout, BM_GETCHECK, 0, 0) == BST_CHECKED;
         v.splitUseWorkspaceDir =
             SendMessageW(st.splitWorkspaceDir, BM_GETCHECK, 0, 0) == BST_CHECKED;
+        v.powerShellHistoryPerProject =
+            SendMessageW(st.powerShellHistory, BM_GETCHECK, 0, 0) == BST_CHECKED;
 #ifdef LINEY_STORE_BUILD
         v.checkForUpdatesOnStartup = false;
 #else
