@@ -709,6 +709,19 @@ void D2DRenderer::drawIcon(IconKind kind, float x, float y, float size,
         for (int i = 0; i < 3; ++i)
             dot(bx + s * (0.20f + 0.30f * i), cy, s * 0.09f);
         break;
+    case IconKind::Archive:  // archive box with lid and handle
+        dc->DrawRectangle(
+            D2D1::RectF(bx + s * 0.12f, by + s * 0.28f,
+                        bx + s * 0.88f, by + s * 0.82f), br, t);
+        line(bx + s * 0.12f, by + s * 0.40f,
+             bx + s * 0.88f, by + s * 0.40f);
+        line(cx - s * 0.16f, by + s * 0.17f,
+             cx + s * 0.16f, by + s * 0.17f);
+        line(cx - s * 0.16f, by + s * 0.17f,
+             cx - s * 0.16f, by + s * 0.28f);
+        line(cx + s * 0.16f, by + s * 0.17f,
+             cx + s * 0.16f, by + s * 0.28f);
+        break;
     }
 }
 

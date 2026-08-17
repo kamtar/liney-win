@@ -212,11 +212,16 @@ void Window::drawLeftSidebar(const Rect& r) {
                 archiveRect.x + 4.0f, archiveRect.y + 3.0f,
                 archiveRect.w - 8.0f, archiveRect.h - 6.0f,
                 std::min(6.0f * dpiScale_, rowH * 0.22f), uiTheme_.tabActiveBg);
-        renderer_->drawTextCentered(archived ? L"↥" : L"▤",
-                                    archiveRect.x, archiveRect.y,
-                                    archiveRect.w, archiveRect.h,
-                                    actionHot ? uiTheme_.text : projectColor,
-                                    true);
+        if (archived) {
+            renderer_->drawIcon(IconKind::Up, archiveRect.x + rowH * 0.12f,
+                                archiveRect.y + rowH * 0.12f, rowH * 0.76f,
+                                actionHot ? uiTheme_.text : kNeutralUiColor);
+        } else {
+            renderer_->drawIcon(IconKind::Archive,
+                                archiveRect.x + rowH * 0.12f,
+                                archiveRect.y + rowH * 0.12f, rowH * 0.76f,
+                                actionHot ? uiTheme_.text : kNeutralUiColor);
+        }
         SidebarRow projectRow{repoRow, RowKind::RepoHeader, i, -1, L""};
         projectRow.actionRect = archiveRect;
         projectRow.archived = archived;
@@ -565,9 +570,7 @@ void Window::drawTabBar(const Rect& r) {
         if (active || projectTab) {
             const float indicatorW =
                 std::clamp(tw * 0.28f, 24.0f * dpiScale_, 54.0f * dpiScale_);
-            const Color indicator = projectTab
-                ? projectColorForTab(*tabs_[i])
-                : uiTheme_.accent;
+            const Color indicator = projectColorForTab(*tabs_[i]);
             renderer_->fillRoundedRect(
                 x + (tw - indicatorW) * 0.5f, r.bottom() - 3.0f, indicatorW,
                 3.0f, 1.5f, indicator);

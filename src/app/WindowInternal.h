@@ -22,6 +22,7 @@ inline constexpr Color kProjectPalette[] = {
     {100, 190, 190}, {220, 190, 100}
 };
 inline constexpr Color kArchivedProjectColor{128, 128, 128};
+inline constexpr Color kNeutralUiColor{145, 145, 145};
 
 // Chrome colors are now runtime-themeable (Window::uiTheme_, see core/Themes.h).
 // The drawing code refers to uiTheme_.sidebarBg / .accent / … directly.

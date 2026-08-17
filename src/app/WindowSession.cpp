@@ -681,12 +681,12 @@ Color Window::ensureProjectColor(const std::wstring& path) {
 
 Color Window::projectColorForTab(const Tab& tab) const {
     Pane* active = tab.active();
-    if (!active || !active->session) return uiTheme_.accent;
+    if (!active || !active->session) return kNeutralUiColor;
     const SessionContext& context = active->session->context();
     std::wstring projectPath = context.projectPath;
     if (projectPath.empty() && !context.worktreePath.empty())
         projectPath = contextForWorkspacePath(context.worktreePath).projectPath;
-    if (projectPath.empty()) return uiTheme_.accent;
+    if (projectPath.empty()) return kNeutralUiColor;
     if (isProjectArchived(projectPath)) return kArchivedProjectColor;
     return projectColorForPath(projectPath);
 }
