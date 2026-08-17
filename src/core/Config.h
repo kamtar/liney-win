@@ -59,6 +59,10 @@ struct Config {
     // Per-project sidebar icons: repo name -> "builtin:<id>".
     // Legacy png/ico paths remain readable for backwards compatibility.
     std::vector<std::pair<std::wstring, std::wstring>> projectIcons;
+    // Per-project chrome colors, keyed by normalized project path.
+    std::vector<std::pair<std::wstring, Color>> projectColors;
+    // Projects hidden from the active workspace list but still restorable.
+    std::vector<std::wstring> archivedProjects;
     // Explicit project folders added to the sidebar (besides scanned ones).
     std::vector<std::wstring> projects;
     // Auto-discovered repositories explicitly removed from the sidebar.

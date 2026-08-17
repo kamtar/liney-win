@@ -15,6 +15,7 @@
 
 #include <fstream>
 #include <algorithm>
+#include <cstdio>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -43,6 +44,7 @@ Json paneToJson(const Pane* p) {
             const char* role = context.role == SessionRole::Agent ? "agent" :
                                context.role == SessionRole::Ssh ? "ssh" : "shell";
             c.set("role", Json::str(role));
+            c.set("workspaceScoped", Json::boolean(context.workspaceScoped));
             c.set("projectPath", Json::str(wideToUtf8(context.projectPath)));
             c.set("worktreePath", Json::str(wideToUtf8(context.worktreePath)));
             c.set("taskName", Json::str(wideToUtf8(context.taskName)));
@@ -493,11 +495,16 @@ std::unique_ptr<Pane> Window::paneFromJson(const Json& j, int cols, int rows) {
     std::wstring shell = utf8ToWide(j["shell"].asString());
     if (shell.empty()) shell = shell_;
     SessionContext context;
+    bool hasPersistedWorkspaceScope = false;
     const Json& c = j["context"];
     if (c.isObject()) {
         const std::string role = c["role"].asString();
         context.role = role == "agent" ? SessionRole::Agent :
                        role == "ssh" ? SessionRole::Ssh : SessionRole::Shell;
+        if (c.contains("workspaceScoped")) {
+            context.workspaceScoped = c["workspaceScoped"].asBool();
+            hasPersistedWorkspaceScope = true;
+        }
         context.projectPath = utf8ToWide(c["projectPath"].asString());
         context.worktreePath = utf8ToWide(c["worktreePath"].asString());
         context.taskName = utf8ToWide(c["taskName"].asString());
@@ -507,7 +514,8 @@ std::unique_ptr<Pane> Window::paneFromJson(const Json& j, int cols, int rows) {
     // Older layout files did not persist session context. Recover a project
     // identity from the saved cwd when possible so enabling this setting also
     // works for those restored layouts.
-    if (context.projectPath.empty() && context.worktreePath.empty())
+    if (!hasPersistedWorkspaceScope && context.projectPath.empty() &&
+        context.worktreePath.empty())
         context = contextForWorkspacePath(cwd);
     const std::wstring historyPath = powerShellHistoryPerProject_
         ? powerShellHistoryPath(context.projectPath, context.worktreePath)
@@ -632,6 +640,57 @@ bool Window::restoreLayoutFrom(const std::wstring& path) {
 // Workspace management
 // ---------------------------------------------------------------------------
 
+bool Window::isProjectArchived(const std::wstring& path) const {
+    return std::any_of(
+        archivedProjects_.begin(), archivedProjects_.end(),
+        [&](const std::wstring& item) {
+            return workspacePathsEqual(item, path);
+        });
+}
+
+Color Window::projectColorForPath(const std::wstring& path) const {
+    for (const auto& item : projectColors_)
+        if (workspacePathsEqual(item.first, path)) return item.second;
+    return uiTheme_.accent;
+}
+
+Color Window::ensureProjectColor(const std::wstring& path) {
+    const std::wstring normalized = normalizeWorkspacePath(path);
+    if (normalized.empty()) return uiTheme_.accent;
+    for (const auto& item : projectColors_)
+        if (workspacePathsEqual(item.first, normalized)) return item.second;
+
+    const size_t paletteSize = sizeof(kProjectPalette) / sizeof(kProjectPalette[0]);
+    size_t slot = projectColors_.size() % paletteSize;
+    for (size_t candidate = 0; candidate < paletteSize; ++candidate) {
+        const Color color = kProjectPalette[candidate];
+        const bool alreadyUsed = std::any_of(
+            projectColors_.begin(), projectColors_.end(),
+            [&](const auto& item) {
+                return item.second.r == color.r && item.second.g == color.g &&
+                       item.second.b == color.b;
+            });
+        if (!alreadyUsed) {
+            slot = candidate;
+            break;
+        }
+    }
+    projectColors_.push_back({normalized, kProjectPalette[slot]});
+    return kProjectPalette[slot];
+}
+
+Color Window::projectColorForTab(const Tab& tab) const {
+    Pane* active = tab.active();
+    if (!active || !active->session) return uiTheme_.accent;
+    const SessionContext& context = active->session->context();
+    std::wstring projectPath = context.projectPath;
+    if (projectPath.empty() && !context.worktreePath.empty())
+        projectPath = contextForWorkspacePath(context.worktreePath).projectPath;
+    if (projectPath.empty()) return uiTheme_.accent;
+    if (isProjectArchived(projectPath)) return kArchivedProjectColor;
+    return projectColorForPath(projectPath);
+}
+
 void Window::rescanWorkspace() {
     // Empty intentionally disables discovery. Depending on the launch
     // directory made the sidebar silently change between shortcuts/shells.
@@ -657,6 +716,14 @@ void Window::rescanWorkspace() {
                                         : _wcsicmp(a.name.c_str(),
                                                    b.name.c_str()) < 0;
                      });
+    bool addedColor = false;
+    for (const Repo& repo : workspace_.repos()) {
+        if (isProjectArchived(repo.path)) continue;
+        const size_t before = projectColors_.size();
+        ensureProjectColor(repo.path);
+        addedColor = addedColor || projectColors_.size() != before;
+    }
+    if (addedColor) persistWorkspaceConfig();
 }
 
 void Window::addWorkspaceFolder() {
@@ -734,9 +801,32 @@ void Window::removeProject(const Repo& repo) {
                          return workspacePathsEqual(item, path);
                      }))
         workspaceExclusions_.push_back(path);
+    archivedProjects_.erase(
+        std::remove_if(archivedProjects_.begin(), archivedProjects_.end(),
+                       [&](const std::wstring& item) {
+                           return workspacePathsEqual(item, path);
+                       }),
+        archivedProjects_.end());
     workspace_.removeRepoByPath(path);
     persistWorkspaceConfig();
     showToast(L"Project removed from workspace");
+}
+
+void Window::toggleProjectArchive(const Repo& repo) {
+    const std::wstring path = normalizeWorkspacePath(repo.path);
+    auto it = std::find_if(
+        archivedProjects_.begin(), archivedProjects_.end(),
+        [&](const std::wstring& item) {
+            return workspacePathsEqual(item, path);
+        });
+    const bool archiving = it == archivedProjects_.end();
+    if (archiving)
+        archivedProjects_.push_back(path);
+    else
+        archivedProjects_.erase(it);
+    persistWorkspaceConfig();
+    rescanWorkspace();
+    showToast(archiving ? L"Project archived" : L"Project restored");
 }
 
 void Window::setProjectIcon(const Repo& repo) {
@@ -893,6 +983,23 @@ void Window::persistWorkspaceConfig() {
         for (const auto& pi : projectIcons_)
             icons.set(wideToUtf8(pi.first), Json::str(wideToUtf8(pi.second)));
         root.set("projectIcons", std::move(icons));
+
+        auto colorToHex = [](const Color& color) {
+            char value[8]{};
+            std::snprintf(value, sizeof(value), "#%02X%02X%02X",
+                          color.r, color.g, color.b);
+            return std::string(value);
+        };
+        Json colors = Json::object();
+        for (const auto& color : projectColors_)
+            colors.set(wideToUtf8(color.first),
+                       Json::str(colorToHex(color.second)));
+        root.set("projectColors", std::move(colors));
+
+        Json archived = Json::array();
+        for (const auto& project : archivedProjects_)
+            archived.push(Json::str(wideToUtf8(project)));
+        root.set("archivedProjects", std::move(archived));
     });
 }
 

@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <string>
+#include <utility>
 
 namespace liney {
 namespace {
@@ -123,7 +124,11 @@ void Window::drawLeftSidebar(const Rect& r) {
     y += rowH + 4.0f;
 
     auto& repos = workspace_.repos();
-    if (repos.empty()) {
+    const int activeRepoCount = static_cast<int>(std::count_if(
+        repos.begin(), repos.end(), [&](const Repo& repo) {
+            return !isProjectArchived(repo.path);
+        }));
+    if (activeRepoCount == 0) {
         const Rect addRow{r.x, y, r.w, rowH};
         rowBackground(addRow);
         renderer_->drawIcon(IconKind::Folder, r.x + pad, y + (rowH - th * 0.78f) * 0.5f,
@@ -154,36 +159,40 @@ void Window::drawLeftSidebar(const Rect& r) {
         }
     }
     const float iconSz = th;  // square project icon
-    for (int i = 0; i < static_cast<int>(repos.size()); ++i) {
-        if (y > r.bottom()) break;
+    auto drawRepo = [&](int i, bool archived) -> bool {
+        if (y > r.bottom()) return false;
         Repo& repo = repos[i];
         const Rect repoRow{ r.x, y, r.w, rowH };
+        const Rect archiveRect{ r.right() - pad - rowH, y, rowH, rowH };
+        const Color projectColor = archived ? kArchivedProjectColor
+                                            : projectColorForPath(repo.path);
         const bool projectSelected =
-            !repo.isGit() && activeSession() &&
+            !archived && !repo.isGit() && activeSession() &&
             workspacePathsEqual(activeSession()->cwd(), repo.path);
         rowBackground(repoRow, projectSelected);
-        // Git repositories disclose worktrees; ordinary folders open directly.
+        renderer_->fillRoundedRect(r.x + 4.0f, y + 5.0f,
+                                   3.0f * dpiScale_, rowH - 10.0f,
+                                   1.5f * dpiScale_, projectColor);
+        // Git repositories disclose worktrees; archived rows stay compact.
         if (repo.isGit())
-            renderer_->drawText(repo.expanded ? L"v" : L">", r.x + pad,
-                                y + tDY, metrics_.cellW * 1.5f, th,
-                                uiTheme_.dim, true);
+            renderer_->drawText(repo.expanded && !archived ? L"v" : L">",
+                                r.x + pad, y + tDY, metrics_.cellW * 1.5f, th,
+                                archived ? kArchivedProjectColor : uiTheme_.dim,
+                                true);
         const float iconX = r.x + pad + metrics_.cellW * 1.5f;
         const float iconY = y + (rowH - iconSz) * 0.5f;
         std::wstring iconPath = resolveRepoIcon(repo);
         const BuiltinIcon* builtin = findBuiltinIcon(iconPath);
-        if (builtin) {
+        if (!archived && builtin) {
             renderer_->drawText(builtin->glyph, iconX, iconY, iconSz + 4.0f,
-                                iconSz + 4.0f, uiTheme_.accent, true);
-        } else if (iconPath.empty() ||
-                   !renderer_->drawImage(iconPath, iconX, iconY, iconSz, iconSz)) {
-            // Default: a folder glyph (tinted by repo) instead of a blank box.
-            static const Color kRepoTints[] = {
-                { 120, 200, 160 }, { 130, 170, 230 }, { 220, 170, 110 },
-                { 200, 140, 200 }, { 210, 130, 130 }, { 150, 190, 120 } };
+                                iconSz + 4.0f, projectColor, true);
+        } else if (!archived && !iconPath.empty() &&
+                   renderer_->drawImage(iconPath, iconX, iconY, iconSz, iconSz)) {
+            // Preserve a user-supplied project image while it is active.
+        } else {
             renderer_->drawIcon(repo.isGit() ? IconKind::Branch
                                              : IconKind::Folder,
-                                iconX, iconY, iconSz,
-                                kRepoTints[i % 6]);
+                                iconX, iconY, iconSz, projectColor);
         }
         const float nameX = iconX + iconSz + 8.0f;
         const bool favorite = std::any_of(
@@ -191,17 +200,32 @@ void Window::drawLeftSidebar(const Rect& r) {
             [&](const std::wstring& path) {
                 return workspacePathsEqual(path, repo.path);
             });
-        const std::wstring repoLabel =
-            favorite ? L"★  " + repo.name : repo.name;
+        const std::wstring repoLabel = favorite ? L"★  " + repo.name : repo.name;
         renderer_->drawText(repoLabel, nameX, y + tDY,
-                            r.x + r.w - nameX - pad,
-                            th, uiTheme_.text, true);
-        sidebarRows_.push_back({ repoRow, RowKind::RepoHeader, i, -1, L"" });
+                            std::max(1.0f, archiveRect.x - nameX - 4.0f), th,
+                            archived ? kArchivedProjectColor : uiTheme_.text,
+                            true);
+        const bool actionHot = archiveRect.contains(
+            static_cast<float>(lastMouseX_), static_cast<float>(lastMouseY_));
+        if (actionHot)
+            renderer_->fillRoundedRect(
+                archiveRect.x + 4.0f, archiveRect.y + 3.0f,
+                archiveRect.w - 8.0f, archiveRect.h - 6.0f,
+                std::min(6.0f * dpiScale_, rowH * 0.22f), uiTheme_.tabActiveBg);
+        renderer_->drawTextCentered(archived ? L"↥" : L"▤",
+                                    archiveRect.x, archiveRect.y,
+                                    archiveRect.w, archiveRect.h,
+                                    actionHot ? uiTheme_.text : projectColor,
+                                    true);
+        SidebarRow projectRow{repoRow, RowKind::RepoHeader, i, -1, L""};
+        projectRow.actionRect = archiveRect;
+        projectRow.archived = archived;
+        sidebarRows_.push_back(std::move(projectRow));
         y += rowH;
 
-        if (repo.expanded) {
+        if (repo.expanded && !archived) {
             for (int w = 0; w < static_cast<int>(repo.worktrees.size()); ++w) {
-                if (y > r.bottom()) break;  // don't emit rows past the panel
+                if (y > r.bottom()) break;
                 const Worktree& wt = repo.worktrees[w];
                 const Rect worktreeRow{ r.x, y, r.w, rowH };
                 const bool selected = activeSession() &&
@@ -216,11 +240,40 @@ void Window::drawLeftSidebar(const Rect& r) {
                     statusLabel += L"  \u2193" + std::to_wstring(wt.status.behind);
                 iconRow(IconKind::Branch, r.x + pad + metrics_.cellW * 2.0f, y,
                         statusLabel, wt.status.changed > 0 ? uiTheme_.text : uiTheme_.dim,
-                        wt.status.changed > 0 ? Color{220, 170, 110} : uiTheme_.accent);
+                        wt.status.changed > 0 ? Color{220, 170, 110} : projectColor);
                 sidebarRows_.push_back({ worktreeRow, RowKind::Worktree, i, w, L"" });
                 y += rowH;
             }
         }
+        return true;
+    };
+
+    for (int i = 0; i < static_cast<int>(repos.size()); ++i)
+        if (!isProjectArchived(repos[i].path) && !drawRepo(i, false)) break;
+
+    const int archivedCount = static_cast<int>(repos.size()) - activeRepoCount;
+    archiveHeaderRect_ = {};
+    if (archivedCount > 0 && y <= r.bottom()) {
+        y += metrics_.sectionGap();
+        archiveHeaderRect_ = {r.x, y, r.w, rowH};
+        rowBackground(archiveHeaderRect_);
+        renderer_->drawText(archiveExpanded_ ? L"v" : L">", r.x + pad,
+                            y + tDY, metrics_.cellW * 1.5f, th,
+                            kArchivedProjectColor, true);
+        const float headerX = r.x + pad + metrics_.cellW * 1.5f;
+        renderer_->drawText(L"ARCHIVE", headerX, y + tDY,
+                            r.right() - headerX - pad, th,
+                            kArchivedProjectColor, true);
+        renderer_->drawText(L"(" + std::to_wstring(archivedCount) + L")",
+                            r.right() - pad - metrics_.cellW * 4.0f, y + tDY,
+                            metrics_.cellW * 4.0f, th, kArchivedProjectColor,
+                            true);
+        sidebarRows_.push_back({archiveHeaderRect_, RowKind::ArchiveHeader,
+                                -1, -1, L""});
+        y += rowH + 4.0f;
+        if (archiveExpanded_)
+            for (int i = 0; i < static_cast<int>(repos.size()); ++i)
+                if (isProjectArchived(repos[i].path) && !drawRepo(i, true)) break;
     }
 
     // ---- SSH: configured hosts; click to open `ssh <host>` in a new tab -----
@@ -505,12 +558,19 @@ void Window::drawTabBar(const Rect& r) {
         renderer_->drawText(elideTabTitle(titles[i], maxChars), textX, textY,
                             textW, metrics_.cellH,
                             active ? uiTheme_.text : uiTheme_.dim, active);
-        if (active) {
+        const bool projectTab = tabs_[i]->active() &&
+            tabs_[i]->active()->session &&
+            (!tabs_[i]->active()->session->context().projectPath.empty() ||
+             !tabs_[i]->active()->session->context().worktreePath.empty());
+        if (active || projectTab) {
             const float indicatorW =
                 std::clamp(tw * 0.28f, 24.0f * dpiScale_, 54.0f * dpiScale_);
+            const Color indicator = projectTab
+                ? projectColorForTab(*tabs_[i])
+                : uiTheme_.accent;
             renderer_->fillRoundedRect(
                 x + (tw - indicatorW) * 0.5f, r.bottom() - 3.0f, indicatorW,
-                3.0f, 1.5f, uiTheme_.accent);
+                3.0f, 1.5f, indicator);
         }
 
         // × close button — shown on the active or hovered tab (the whole area

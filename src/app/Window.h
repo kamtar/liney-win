@@ -52,11 +52,16 @@ private:
     void addWorkspaceFolder();       // pick a folder, add as a project, persist
     void removeProject(const Repo& repo);   // drop a project, persist
     void setProjectIcon(const Repo& repo);  // pick an icon for a project, persist
-    void persistWorkspaceConfig();   // write projects_ + projectIcons_ to config
+    void toggleProjectArchive(const Repo& repo); // archive/unarchive, persist
+    void persistWorkspaceConfig();   // write workspace projects and metadata
     void rememberRecentProject(const std::wstring& path);
     void toggleFavoriteProject(const std::wstring& path);
     void pollWorkspaceStatusRefresh();
     void drawTabBar(const Rect& r);
+    bool isProjectArchived(const std::wstring& path) const;
+    Color projectColorForPath(const std::wstring& path) const;
+    Color ensureProjectColor(const std::wstring& path);
+    Color projectColorForTab(const Tab& tab) const;
     void drawPanes(const Rect& r);
     void drawWelcome(const Rect& r);
     void drawToast();
@@ -72,10 +77,12 @@ private:
                 const SessionContext& context = SessionContext{});
     TerminalSession* newTabShell(
         const std::wstring& shellCmd, const std::wstring& cwd,
-        const SessionContext& context = SessionContext{});
+        const SessionContext& context = SessionContext{},
+        bool inferWorkspaceContext = true);
     TerminalSession* openWorkspaceSession(const std::wstring& path,
                                           const std::wstring& projectPath,
-                                          const std::wstring& worktreePath = L"");
+                                          const std::wstring& worktreePath = L"",
+                                          bool forceNew = false);
     SessionContext contextForWorkspacePath(const std::wstring& path) const;
     void splitActive(SplitDir dir);
     void toggleZoom();     // Ctrl+Shift+Z: maximize/restore the active pane
@@ -275,6 +282,8 @@ private:
     std::vector<KeyBinding> keybindings_;
     std::vector<AgentDef> agents_;
     std::vector<std::pair<std::wstring, std::wstring>> projectIcons_;
+    std::vector<std::pair<std::wstring, Color>> projectColors_;
+    std::vector<std::wstring> archivedProjects_;
     std::vector<std::wstring> projects_;   // explicit sidebar project folders
     std::vector<std::wstring> workspaceExclusions_;  // hidden scanned repos
     std::vector<std::wstring> recentProjects_;
@@ -330,13 +339,15 @@ private:
 
     // Hit-test rects rebuilt each frame.
     enum class RowKind { RepoHeader, Worktree, FileUp, FileDir, FileEntry,
-                         SshHost, Agent, RecentProject };
+                         SshHost, Agent, RecentProject, ArchiveHeader };
     struct SidebarRow {
         Rect rect;
         RowKind kind = RowKind::RepoHeader;
         int repo = -1;
         int worktree = -1;
         std::wstring path;  // for file rows
+        Rect actionRect;  // archive/unarchive button for project rows
+        bool archived = false;
     };
     std::vector<SidebarRow> sidebarRows_;
     std::vector<Rect> tabRects_;
@@ -344,6 +355,8 @@ private:
     int hoverTab_ = -1;        // tab under the pointer (-1 = none); shows its ×
     int lastMouseX_ = -1, lastMouseY_ = -1;  // client-space pointer, for hover
     Rect workspaceAddRect_{};  // the WORKSPACE "+" (add project) button
+    Rect archiveHeaderRect_{};
+    bool archiveExpanded_ = false;
     Rect sidebarToggleRect_{}; // tab-strip button; remains visible when collapsed
     Rect plusRect_{};
     Rect tabOverflowRect_{};   // opens a checked list of every tab

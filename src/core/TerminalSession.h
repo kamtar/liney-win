@@ -33,6 +33,11 @@ enum class AgentActivity { Idle, Running, Waiting, NeedsInput, Done, Failed };
 
 struct SessionContext {
     SessionRole role = SessionRole::Shell;
+    // True when the session intentionally belongs to a workspace project or
+    // worktree. False is also persisted for generic tabs so restoring a tab
+    // whose cwd happens to be inside a project does not assign project history
+    // to it later.
+    bool workspaceScoped = false;
     std::wstring projectPath;
     std::wstring worktreePath;
     std::wstring taskName;

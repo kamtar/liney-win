@@ -280,6 +280,8 @@ bool Window::create(HINSTANCE hInstance, const wchar_t* title, int width,
     sshHosts_ = cfg.sshHosts;
     agents_ = cfg.agents;
     projectIcons_ = cfg.projectIcons;
+    projectColors_ = cfg.projectColors;
+    archivedProjects_ = cfg.archivedProjects;
     projects_ = cfg.projects;
     workspaceExclusions_ = cfg.workspaceExclusions;
     recentProjects_ = cfg.recentProjects;
@@ -1139,6 +1141,11 @@ void Window::updateChromeAccessibility() {
         } else if (row.kind == RowKind::RecentProject) {
             info.name = row.path;
             info.helpText = L"Recent project. Invoke to open a terminal.";
+        } else if (row.kind == RowKind::ArchiveHeader) {
+            info.name = L"Archive";
+            info.helpText = L"Archived projects. Invoke to expand or collapse.";
+            info.expandable = true;
+            info.expanded = archiveExpanded_;
         }
         if (!info.name.empty()) elements.push_back(std::move(info));
     }
@@ -1240,19 +1247,19 @@ SessionContext Window::contextForWorkspacePath(const std::wstring& path) const {
 }
 
 void Window::newTab(const std::wstring& cwd, const SessionContext& context) {
-    SessionContext actual = context;
-    if (actual.projectPath.empty() && actual.worktreePath.empty())
-        actual = contextForWorkspacePath(cwd);
-    newTabShell(shell_, cwd, actual);
+    // Generic tab creation, including the tab-strip `+`, is deliberately
+    // outside workspace identity. Its PowerShell session therefore uses the
+    // user's normal global PSReadLine history even when cwd is in a project.
+    newTabShell(shell_, cwd, context, false);
 }
 
 TerminalSession* Window::openWorkspaceSession(
     const std::wstring& path, const std::wstring& projectPath,
-    const std::wstring& worktreePath) {
+    const std::wstring& worktreePath, bool forceNew) {
     // Sidebar rows are navigation targets, not unconditional "new tab"
     // actions. Re-selecting a project/worktree should return to its existing
     // terminal and preserve the buffer the user left there.
-    for (size_t tabIndex = 0; tabIndex < tabs_.size(); ++tabIndex) {
+    for (size_t tabIndex = 0; !forceNew && tabIndex < tabs_.size(); ++tabIndex) {
         for (Pane* leaf : tabs_[tabIndex]->leaves()) {
             if (!leaf || !leaf->session) continue;
             const SessionContext& context = leaf->session->context();
@@ -1272,6 +1279,7 @@ TerminalSession* Window::openWorkspaceSession(
     }
 
     SessionContext context;
+    context.workspaceScoped = true;
     context.projectPath = projectPath;
     context.worktreePath = worktreePath;
     return newTabShell(shell_, path, context);
@@ -1279,7 +1287,8 @@ TerminalSession* Window::openWorkspaceSession(
 
 TerminalSession* Window::newTabShell(const std::wstring& shellCmd,
                                       const std::wstring& cwd,
-                                      const SessionContext& context) {
+                                      const SessionContext& context,
+                                      bool inferWorkspaceContext) {
     clearSelection();
     Rect leftBar, rightPanel, tabBar, panes;
     regions(leftBar, rightPanel, tabBar, panes);
@@ -1287,8 +1296,12 @@ TerminalSession* Window::newTabShell(const std::wstring& shellCmd,
     cellsForRect(panes, cols, rows);
 
     SessionContext actualContext = context;
-    if (actualContext.projectPath.empty() && actualContext.worktreePath.empty())
+    if (inferWorkspaceContext && actualContext.projectPath.empty() &&
+        actualContext.worktreePath.empty())
         actualContext = contextForWorkspacePath(cwd);
+    actualContext.workspaceScoped =
+        actualContext.workspaceScoped || !actualContext.projectPath.empty() ||
+        !actualContext.worktreePath.empty();
     auto session = std::make_unique<TerminalSession>();
     const std::wstring historyPath = powerShellHistoryPerProject_
         ? powerShellHistoryPath(actualContext.projectPath,

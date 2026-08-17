@@ -14,6 +14,15 @@ namespace liney {
 
 inline constexpr const wchar_t* kAppVersion = L"0.10.8";  // sync with AppxManifest
 
+// Stable, high-contrast project colors used by the workspace rail and tab
+// indicators. The assignment is persisted per project path by Window.
+inline constexpr Color kProjectPalette[] = {
+    {120, 200, 160}, {130, 170, 230}, {220, 170, 110},
+    {200, 140, 200}, {210, 130, 130}, {150, 190, 120},
+    {100, 190, 190}, {220, 190, 100}
+};
+inline constexpr Color kArchivedProjectColor{128, 128, 128};
+
 // Chrome colors are now runtime-themeable (Window::uiTheme_, see core/Themes.h).
 // The drawing code refers to uiTheme_.sidebarBg / .accent / … directly.
 

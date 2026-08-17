@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -54,6 +55,12 @@ Color hexToColor(const std::string& s, Color dflt) {
     return { static_cast<uint8_t>(hx(h[0]) * 16 + hx(h[1])),
              static_cast<uint8_t>(hx(h[2]) * 16 + hx(h[3])),
              static_cast<uint8_t>(hx(h[4]) * 16 + hx(h[5])) };
+}
+
+std::string colorToHex(const Color& c) {
+    char buf[8]{};
+    std::snprintf(buf, sizeof(buf), "#%02X%02X%02X", c.r, c.g, c.b);
+    return buf;
 }
 
 std::string readFile(const std::wstring& path) {
@@ -145,6 +152,14 @@ std::string defaultJson(const Config& c) {
     for (const auto& icon : c.projectIcons)
         icons.set(wideToUtf8(icon.first), Json::str(wideToUtf8(icon.second)));
     j.set("projectIcons", std::move(icons));
+    Json colors = Json::object();
+    for (const auto& color : c.projectColors)
+        colors.set(wideToUtf8(color.first), Json::str(colorToHex(color.second)));
+    j.set("projectColors", std::move(colors));
+    Json archived = Json::array();
+    for (const auto& project : c.archivedProjects)
+        archived.push(Json::str(wideToUtf8(project)));
+    j.set("archivedProjects", std::move(archived));
     if (!c.themeName.empty())
         j.set("theme", Json::str(wideToUtf8(c.themeName)));
     return j.dump(2);
@@ -358,6 +373,18 @@ Config loadConfig() {
         for (const auto& kv : pi.members())
             cfg.projectIcons.push_back(
                 { utf8ToWide(kv.first), utf8ToWide(kv.second.asString()) });
+    // projectColors: { "C:/path/to/project": "#RRGGBB" }
+    const Json& pc = j["projectColors"];
+    if (pc.isObject())
+        for (const auto& kv : pc.members())
+            if (!kv.first.empty() && kv.second.type() == Json::Type::String)
+                cfg.projectColors.push_back(
+                    { utf8ToWide(kv.first),
+                      hexToColor(kv.second.asString(), Color{120, 200, 160}) });
+    if (j["archivedProjects"].isArray())
+        for (const Json& p : j["archivedProjects"].items())
+            if (p.type() == Json::Type::String && !p.asString().empty())
+                cfg.archivedProjects.push_back(utf8ToWide(p.asString()));
     // projects: ["C:/path/to/folder", ...] (explicit sidebar projects)
     if (j["projects"].isArray())
         for (const Json& p : j["projects"].items())

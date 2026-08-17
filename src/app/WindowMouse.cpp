@@ -25,6 +25,18 @@ void Window::onMouseDown(int xi, int yi) {
         }
         for (const SidebarRow& row : sidebarRows_) {
             if (!row.rect.contains(x, y)) continue;
+            if (row.kind == RowKind::ArchiveHeader) {
+                archiveExpanded_ = !archiveExpanded_;
+                markRenderDirty();
+                return;
+            }
+            if (row.kind == RowKind::RepoHeader &&
+                row.actionRect.contains(x, y)) {
+                auto& repos = workspace_.repos();
+                if (row.repo >= 0 && row.repo < static_cast<int>(repos.size()))
+                    toggleProjectArchive(repos[row.repo]);
+                return;
+            }
             if (row.kind == RowKind::RecentProject) {
                 if (GetFileAttributesW(row.path.c_str()) !=
                     INVALID_FILE_ATTRIBUTES) {
@@ -40,7 +52,7 @@ void Window::onMouseDown(int xi, int yi) {
                 auto& repos = workspace_.repos();
                 if (row.repo < 0 || row.repo >= static_cast<int>(repos.size())) return;
                 Repo& repo = repos[row.repo];
-                if (repo.isGit()) {
+                if (repo.isGit() && !row.archived) {
                     repo.expanded = !repo.expanded;
                     if (repo.expanded) workspace_.loadWorktrees(repo);
                 } else {
@@ -238,6 +250,46 @@ void Window::onMouseDoubleClick(int xi, int yi) {
     const float x = static_cast<float>(xi), y = static_cast<float>(yi);
     Rect leftBar, rightPanel, tabBar, panes;
     regions(leftBar, rightPanel, tabBar, panes);
+    if (sidebarVisible_ && leftBar.contains(x, y)) {
+        // A single project click is navigation and reuses its existing
+        // terminal. A double-click is the explicit "always create another"
+        // action for project/worktree sessions.
+        for (const SidebarRow& row : sidebarRows_) {
+            if (!row.rect.contains(x, y)) continue;
+            if (row.kind == RowKind::RecentProject) {
+                if (GetFileAttributesW(row.path.c_str()) !=
+                    INVALID_FILE_ATTRIBUTES) {
+                    rememberRecentProject(row.path);
+                    openWorkspaceSession(row.path, row.path, L"", true);
+                } else {
+                    showToast(L"Recent project is no longer available", true);
+                }
+                return;
+            }
+            if (row.kind == RowKind::RepoHeader) {
+                auto& repos = workspace_.repos();
+                if (row.repo < 0 || row.repo >= static_cast<int>(repos.size()))
+                    return;
+                const Repo& repo = repos[row.repo];
+                rememberRecentProject(repo.path);
+                openWorkspaceSession(repo.path, repo.path,
+                                     repo.isGit() ? repo.path : L"", true);
+                return;
+            }
+            if (row.kind == RowKind::Worktree) {
+                auto& repos = workspace_.repos();
+                if (row.repo < 0 || row.repo >= static_cast<int>(repos.size()))
+                    return;
+                const Repo& repo = repos[row.repo];
+                if (row.worktree < 0 ||
+                    row.worktree >= static_cast<int>(repo.worktrees.size()))
+                    return;
+                const Worktree& wt = repo.worktrees[row.worktree];
+                openWorkspaceSession(wt.path, repo.path, wt.path, true);
+                return;
+            }
+        }
+    }
     if (tabBar.contains(x, y)) {
         // Double-click empty tab-strip space opens a new tab (common convention);
         // on a tab / + / ☰ it's just a click.
@@ -368,6 +420,8 @@ void Window::onMouseDownRight(int xi, int yi) {
             AppendMenuW(menu, MF_STRING, 8,
                         favorite ? L"Unpin project" : L"Pin project");
             AppendMenuW(menu, MF_STRING, 2, L"Set icon…");
+            AppendMenuW(menu, MF_STRING, 9,
+                        row.archived ? L"Restore project" : L"Archive project");
             AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
             AppendMenuW(menu, MF_STRING, 3, L"Remove from workspace");
             const int cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
@@ -460,6 +514,8 @@ void Window::onMouseDownRight(int xi, int yi) {
                 setProjectIcon(repo);
             } else if (cmd == 8) {
                 toggleFavoriteProject(repo.path);
+            } else if (cmd == 9) {
+                toggleProjectArchive(repo);
             } else if (cmd == 3) {
                 removeProject(repo);  // erases `repo`; nothing used after
             }
