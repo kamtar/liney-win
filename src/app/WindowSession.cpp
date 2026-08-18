@@ -64,7 +64,11 @@ void Window::initTray() {
     nid_.hWnd = hwnd_;
     nid_.uID = 1;
     nid_.uFlags = NIF_ICON | NIF_TIP;
-    nid_.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
+    // Use the embedded Liney icon for the notification-area entry as well as
+    // the main window. IDI_APPLICATION is Windows' generic app placeholder
+    // (the power-shaped icon shown in the tray overflow popup).
+    nid_.hIcon = LoadIconW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(1));
+    if (!nid_.hIcon) nid_.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
     wcsncpy_s(nid_.szTip, L"Liney", _TRUNCATE);
     trayAdded_ = Shell_NotifyIconW(NIM_ADD, &nid_) != FALSE;
 }
