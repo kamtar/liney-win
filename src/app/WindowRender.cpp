@@ -2,6 +2,7 @@
 #include "app/WindowInternal.h"
 #include "app/TabStripLayout.h"
 #include "app/BuiltinIcons.h"
+#include "core/RenderSignal.h"
 
 #include <algorithm>
 #include <cmath>
@@ -63,6 +64,9 @@ void Window::drawLeftSidebar(const Rect& r) {
     const float th = metrics_.cellH;               // text glyph height
     const float tDY = (rowH - th) * 0.5f;          // vertical-center text in a row
     float y = r.y + 10.0f;
+    sshHeaderRect_ = {};
+    archiveHeaderRect_ = {};
+    serialHeaderRect_ = {};
 
     auto hot = [&](const Rect& row) {
         return row.contains(static_cast<float>(lastMouseX_),
@@ -256,44 +260,70 @@ void Window::drawLeftSidebar(const Rect& r) {
     for (int i = 0; i < static_cast<int>(repos.size()); ++i)
         if (!isProjectArchived(repos[i].path) && !drawRepo(i, false)) break;
 
-    const int archivedCount = static_cast<int>(repos.size()) - activeRepoCount;
-    archiveHeaderRect_ = {};
-    if (archivedCount > 0 && y <= r.bottom()) {
+    // ---- SSH: configured hosts; same collapsible category behavior as Serial.
+    if (!sshHosts_.empty() && y <= r.bottom()) {
         y += metrics_.sectionGap();
-        archiveHeaderRect_ = {r.x, y, r.w, rowH};
-        rowBackground(archiveHeaderRect_);
-        renderer_->drawText(archiveExpanded_ ? L"v" : L">", r.x + pad,
+        sshHeaderRect_ = {r.x, y, r.w, rowH};
+        rowBackground(sshHeaderRect_);
+        renderer_->drawText(sshExpanded_ ? L"v" : L">", r.x + pad,
                             y + tDY, metrics_.cellW * 1.5f, th,
-                            kArchivedProjectColor, true);
+                            uiTheme_.accent, true);
         const float headerX = r.x + pad + metrics_.cellW * 1.5f;
-        renderer_->drawText(L"ARCHIVE", headerX, y + tDY,
+        renderer_->drawText(L"SSH", headerX, y + tDY,
                             r.right() - headerX - pad, th,
-                            kArchivedProjectColor, true);
-        renderer_->drawText(L"(" + std::to_wstring(archivedCount) + L")",
-                            r.right() - pad - metrics_.cellW * 4.0f, y + tDY,
-                            metrics_.cellW * 4.0f, th, kArchivedProjectColor,
-                            true);
-        sidebarRows_.push_back({archiveHeaderRect_, RowKind::ArchiveHeader,
+                            uiTheme_.sidebarHdr, true);
+        renderer_->drawText(L"(" + std::to_wstring(sshHosts_.size()) + L")",
+                            r.right() - pad - metrics_.cellW * 4.0f,
+                            y + tDY, metrics_.cellW * 4.0f, th,
+                            uiTheme_.dim, true);
+        sidebarRows_.push_back({sshHeaderRect_, RowKind::SshHeader,
                                 -1, -1, L""});
         y += rowH + 4.0f;
-        if (archiveExpanded_)
-            for (int i = 0; i < static_cast<int>(repos.size()); ++i)
-                if (isProjectArchived(repos[i].path) && !drawRepo(i, true)) break;
+        if (sshExpanded_) {
+            for (int i = 0; i < static_cast<int>(sshHosts_.size()); ++i) {
+                if (y > r.bottom()) break;
+                const Rect row{ r.x, y, r.w, rowH };
+                rowBackground(row);
+                iconRow(IconKind::Globe, r.x + pad, y, sshHosts_[i].name,
+                        uiTheme_.text, uiTheme_.accent);
+                sidebarRows_.push_back({ row, RowKind::SshHost, i, -1, L"" });
+                y += rowH;
+            }
+        }
     }
 
-    // ---- SSH: configured hosts; click to open `ssh <host>` in a new tab -----
-    if (!sshHosts_.empty()) {
+    // ---- SERIAL: configured COM ports; the category is collapsible ---------
+    if (!serialPorts_.empty() && y <= r.bottom()) {
         y += metrics_.sectionGap();
-        header(L"SSH", r.right() - pad);
+        serialHeaderRect_ = {r.x, y, r.w, rowH};
+        rowBackground(serialHeaderRect_);
+        renderer_->drawText(serialExpanded_ ? L"v" : L">", r.x + pad,
+                            y + tDY, metrics_.cellW * 1.5f, th,
+                            uiTheme_.accent, true);
+        const float headerX = r.x + pad + metrics_.cellW * 1.5f;
+        renderer_->drawText(L"SERIAL", headerX, y + tDY,
+                            r.right() - headerX - pad, th,
+                            uiTheme_.sidebarHdr, true);
+        renderer_->drawText(L"(" + std::to_wstring(serialPorts_.size()) + L")",
+                            r.right() - pad - metrics_.cellW * 4.0f,
+                            y + tDY, metrics_.cellW * 4.0f, th,
+                            uiTheme_.dim, true);
+        sidebarRows_.push_back({serialHeaderRect_, RowKind::SerialHeader,
+                                -1, -1, L""});
         y += rowH + 4.0f;
-        for (int i = 0; i < static_cast<int>(sshHosts_.size()); ++i) {
-            if (y > r.bottom()) break;
-            const Rect row{ r.x, y, r.w, rowH };
-            rowBackground(row);
-            iconRow(IconKind::Globe, r.x + pad, y, sshHosts_[i].name,
-                    uiTheme_.text, uiTheme_.accent);
-            sidebarRows_.push_back({ row, RowKind::SshHost, i, -1, L"" });
-            y += rowH;
+        if (serialExpanded_) {
+            for (int i = 0; i < static_cast<int>(serialPorts_.size()); ++i) {
+                if (y > r.bottom()) break;
+                const SerialProfile& profile = serialPorts_[i];
+                const Rect row{r.x, y, r.w, rowH};
+                rowBackground(row);
+                const std::wstring label = serialProfileDisplayName(profile);
+                iconRow(IconKind::Settings, r.x + pad, y, label,
+                        uiTheme_.text, uiTheme_.accent);
+                sidebarRows_.push_back({row, RowKind::SerialPort, i, -1,
+                                        L""});
+                y += rowH;
+            }
         }
     }
 
@@ -337,6 +367,31 @@ void Window::drawLeftSidebar(const Rect& r) {
             y += rowH;
         }
     }
+
+    // ARCHIVE is deliberately last, after SSH, Serial, and Agents.
+    const int archivedCount = static_cast<int>(repos.size()) - activeRepoCount;
+    if (archivedCount > 0 && y <= r.bottom()) {
+        y += metrics_.sectionGap();
+        archiveHeaderRect_ = {r.x, y, r.w, rowH};
+        rowBackground(archiveHeaderRect_);
+        renderer_->drawText(archiveExpanded_ ? L"v" : L">", r.x + pad,
+                            y + tDY, metrics_.cellW * 1.5f, th,
+                            kArchivedProjectColor, true);
+        const float headerX = r.x + pad + metrics_.cellW * 1.5f;
+        renderer_->drawText(L"ARCHIVE", headerX, y + tDY,
+                            r.right() - headerX - pad, th,
+                            kArchivedProjectColor, true);
+        renderer_->drawText(L"(" + std::to_wstring(archivedCount) + L")",
+                            r.right() - pad - metrics_.cellW * 4.0f, y + tDY,
+                            metrics_.cellW * 4.0f, th, kArchivedProjectColor,
+                            true);
+        sidebarRows_.push_back({archiveHeaderRect_, RowKind::ArchiveHeader,
+                                -1, -1, L""});
+        y += rowH + 4.0f;
+        if (archiveExpanded_)
+            for (int i = 0; i < static_cast<int>(repos.size()); ++i)
+                if (isProjectArchived(repos[i].path) && !drawRepo(i, true)) break;
+    }
 }
 
 void Window::drawFilesPanel(const Rect& r) {
@@ -358,26 +413,53 @@ void Window::drawFilesPanel(const Rect& r) {
     };
 
     refreshFileList();
-    renderer_->drawText(L"FILES", r.x + pad, y + tDY,
+    const TerminalSession* focused = activeSession();
+    const bool sshWithoutProfile = focused &&
+        focused->context().role == SessionRole::Ssh &&
+        !focused->context().sshProfile;
+    const bool remote = focused && focused->context().role == SessionRole::Ssh &&
+        focused->context().sshProfile.has_value();
+    const std::wstring& visiblePath = remote ? remoteBrowsePath_ : browsePath_;
+    renderer_->drawText(remote ? L"SFTP" : L"FILES", r.x + pad, y + tDY,
                         metrics_.cellW * 6.0f, th,
                         uiTheme_.sidebarHdr, true);
-    if (!browsePath_.empty()) {
+    if (!visiblePath.empty()) {
         std::vector<std::pair<std::wstring, std::wstring>> crumbs;
-        std::wstring cumulative;
-        size_t start = 0;
-        while (start < browsePath_.size()) {
-            size_t slash = browsePath_.find_first_of(L"\\/", start);
-            const size_t end =
-                slash == std::wstring::npos ? browsePath_.size() : slash;
-            std::wstring part = browsePath_.substr(start, end - start);
-            if (!part.empty()) {
-                if (!cumulative.empty() && cumulative.back() != L'\\')
-                    cumulative += L'\\';
-                cumulative += part;
-                crumbs.push_back({part, cumulative});
+        if (remote) {
+            std::wstring cumulative = visiblePath.front() == L'/' ? L"/" : L"";
+            size_t start = visiblePath.front() == L'/' ? 1 : 0;
+            if (visiblePath == L"/") crumbs.push_back({L"/", L"/"});
+            while (start < visiblePath.size()) {
+                const size_t slash = visiblePath.find(L'/', start);
+                const size_t end = slash == std::wstring::npos
+                    ? visiblePath.size() : slash;
+                const std::wstring part = visiblePath.substr(start, end - start);
+                if (!part.empty()) {
+                    if (cumulative.empty() || cumulative.back() != L'/')
+                        cumulative += L'/';
+                    cumulative += part;
+                    crumbs.push_back({part, cumulative});
+                }
+                if (slash == std::wstring::npos) break;
+                start = slash + 1;
             }
-            if (slash == std::wstring::npos) break;
-            start = slash + 1;
+        } else {
+            std::wstring cumulative;
+            size_t start = 0;
+            while (start < visiblePath.size()) {
+                const size_t slash = visiblePath.find_first_of(L"\\/", start);
+                const size_t end = slash == std::wstring::npos
+                    ? visiblePath.size() : slash;
+                std::wstring part = visiblePath.substr(start, end - start);
+                if (!part.empty()) {
+                    if (!cumulative.empty() && cumulative.back() != L'\\')
+                        cumulative += L'\\';
+                    cumulative += part;
+                    crumbs.push_back({part, cumulative});
+                }
+                if (slash == std::wstring::npos) break;
+                start = slash + 1;
+            }
         }
         const size_t first = crumbs.size() > 2 ? crumbs.size() - 2 : 0;
         float bx = r.x + pad + metrics_.cellW * 6.0f;
@@ -404,6 +486,23 @@ void Window::drawFilesPanel(const Rect& r) {
     }
     y += rowH + 4.0f;
 
+    if (sshWithoutProfile) {
+        renderer_->drawText(
+            L"Open this host from the SSH sidebar to browse its files.",
+            r.x + pad, y + tDY, r.w - pad * 2.0f, th, uiTheme_.dim, false);
+        return;
+    }
+    if (remote && remoteFileBusy_) {
+        renderer_->drawText(L"Loading remote folder…", r.x + pad, y + tDY,
+                            r.w - pad * 2.0f, th, uiTheme_.dim, false);
+        return;
+    }
+    if (remote && !remoteFileError_.empty()) {
+        renderer_->drawText(remoteFileError_, r.x + pad, y + tDY,
+                            r.w - pad * 2.0f, th, uiTheme_.dim, false);
+        return;
+    }
+
     const float isz = th * 0.78f;
     auto iconRow = [&](IconKind k, const std::wstring& txt, const Color& tc,
                        const Color& ic) {
@@ -413,7 +512,7 @@ void Window::drawFilesPanel(const Rect& r) {
                             false);
     };
 
-    if (!browsePath_.empty()) {
+    if (!visiblePath.empty() && (!remote || visiblePath != L"/")) {
         const Rect row{ r.x, y, r.w, rowH };
         rowBackground(row);
         iconRow(IconKind::Up, L"..", uiTheme_.dim, uiTheme_.dim);
@@ -433,12 +532,136 @@ void Window::drawFilesPanel(const Rect& r) {
     }
 }
 
+#if 0  // Replaced below by requests on the active embedded SSH session.
 void Window::refreshFileList() {
+    TerminalSession* session = activeSession();
+    const SshProfile* remoteProfile = session &&
+        session->context().role == SessionRole::Ssh &&
+        session->context().sshProfile ? &*session->context().sshProfile : nullptr;
+    if (remoteProfile) {
+        const std::wstring sessionKey =
+            sshProfileTarget(*remoteProfile) + L":" +
+            std::to_wstring(remoteProfile->port) + L":" +
+            remoteProfile->identityFile;
+        if (sessionKey != remoteSessionKey_) {
+            remoteSessionKey_ = sessionKey;
+            remoteBrowsePath_.clear();
+            remoteListedDir_.clear();
+            remoteListedRequestKey_.clear();
+            remoteFileError_.clear();
+            fileEntries_.clear();
+            remoteRetryAt_ = 0;
+            remoteRetryCount_ = 0;
+        }
+
+        if (remoteFileThread_.joinable() &&
+            !remoteFileReady_.load(std::memory_order_acquire)) {
+            // A request for the previous pane/profile is still running. Do
+            // not replace a joinable std::thread; consume it on completion and
+            // then issue the request for this pane.
+            remoteFileBusy_ = true;
+            return;
+        }
+
+        const std::wstring requestKey =
+            remoteSessionKey_ + L"\n" + remoteBrowsePath_;
+        if (remoteFileReady_.load(std::memory_order_acquire)) {
+            if (remoteFileThread_.joinable()) remoteFileThread_.join();
+            std::unique_ptr<RemoteFileResult> completed;
+            {
+                std::lock_guard lock(remoteFileMutex_);
+                completed = std::move(remoteFileResult_);
+            }
+            remoteFileReady_.store(false, std::memory_order_release);
+            remoteFileBusy_ = false;
+            if (completed && completed->requestKey ==
+                    remoteSessionKey_ + L"\n" + remoteBrowsePath_) {
+                remoteFileError_ = completed->error;
+                if (completed->error.empty()) {
+                    remoteBrowsePath_ = completed->path;
+                    remoteListedDir_ = completed->path;
+                    fileEntries_.clear();
+                    for (const FileEntry& entry : completed->entries) {
+                        const std::wstring path = completed->path == L"/"
+                            ? L"/" + entry.name
+                            : completed->path +
+                              (completed->path.empty() || completed->path.back() == L'/'
+                                   ? L"" : L"/") + entry.name;
+                        fileEntries_.push_back({entry.name, path, entry.isDir});
+                    }
+                    remoteListedRequestKey_ =
+                        remoteSessionKey_ + L"\n" + remoteBrowsePath_;
+                    remoteRetryAt_ = 0;
+                    remoteRetryCount_ = 0;
+                } else {
+                    remoteListedRequestKey_ = requestKey;
+                    remoteRetryAt_ = GetTickCount64() + 1500;
+                    ++remoteRetryCount_;
+                }
+            }
+        }
+
+        const std::wstring nextRequestKey =
+            remoteSessionKey_ + L"\n" + remoteBrowsePath_;
+        if (remoteListedRequestKey_ != nextRequestKey) {
+            remoteRetryAt_ = 0;
+            remoteRetryCount_ = 0;
+        }
+        const bool retryDue = !remoteFileError_.empty() &&
+            remoteRetryCount_ <= 5 && remoteRetryAt_ != 0 &&
+            GetTickCount64() >= remoteRetryAt_;
+        if (!remoteFileBusy_ &&
+            (remoteListedRequestKey_ != nextRequestKey || retryDue)) {
+            const SshProfile profile = *remoteProfile;
+            const std::wstring requestedPath = remoteBrowsePath_;
+            remoteFileBusy_ = true;
+            remoteFileError_.clear();
+            remoteFileThread_ = std::thread(
+                [this, profile, requestedPath, nextRequestKey] {
+                    const SftpListing listing =
+                        listSftpDirectory(profile, requestedPath);
+                    auto result = std::make_unique<RemoteFileResult>();
+                    result->requestKey = nextRequestKey;
+                    result->path = listing.path;
+                    result->error = listing.error;
+                    result->entries.reserve(listing.entries.size());
+                    for (const RemoteFileEntry& entry : listing.entries)
+                        result->entries.push_back({entry.name, L"", entry.isDir});
+                    {
+                        std::lock_guard lock(remoteFileMutex_);
+                        remoteFileResult_ = std::move(result);
+                    }
+                    remoteFileReady_.store(true, std::memory_order_release);
+                    markRenderDirty();
+                });
+        }
+        return;
+    }
+
+    if (remoteFileThread_.joinable()) {
+        // The active pane changed back to a local session while a remote
+        // request was in flight. It is safe to wait here only after the
+        // worker signalled completion; otherwise the terminal UI could stall.
+        if (remoteFileReady_.load(std::memory_order_acquire)) {
+            remoteFileThread_.join();
+            remoteFileReady_.store(false, std::memory_order_release);
+            std::lock_guard lock(remoteFileMutex_);
+            remoteFileResult_.reset();
+        }
+    }
+    remoteFileBusy_ = false;
+    remoteSessionKey_.clear();
+    remoteListedRequestKey_.clear();
+    remoteFileListedAt_ = 0;
+    remoteFileError_.clear();
+    remoteRetryAt_ = 0;
+    remoteRetryCount_ = 0;
+
     // Follow the focused pane's cwd unless the user navigated manually.
-    if (TerminalSession* s = activeSession()) {
-        if (s->cwd() != lastActiveCwd_) {
-            lastActiveCwd_ = s->cwd();
-            browsePath_ = s->cwd();
+    if (session) {
+        if (session->cwd() != lastActiveCwd_) {
+            lastActiveCwd_ = session->cwd();
+            browsePath_ = session->cwd();
         }
     }
     if (browsePath_ == listedDir_) return;  // already listed
@@ -461,6 +684,162 @@ void Window::refreshFileList() {
     std::sort(fileEntries_.begin(), fileEntries_.end(),
               [](const FileEntry& a, const FileEntry& b) {
                   if (a.isDir != b.isDir) return a.isDir;  // dirs first
+                  return _wcsicmp(a.name.c_str(), b.name.c_str()) < 0;
+              });
+}
+#endif
+
+void Window::refreshFileList() {
+
+    TerminalSession* session = activeSession();
+    const SshProfile* remoteProfile = session &&
+        session->context().role == SessionRole::Ssh &&
+        session->context().sshProfile ? &*session->context().sshProfile : nullptr;
+    if (remoteProfile) {
+        const std::wstring sessionKey =
+            sshProfileTarget(*remoteProfile) + L":" +
+            std::to_wstring(remoteProfile->port) + L":" +
+            remoteProfile->identityFile;
+        if (sessionKey != remoteSessionKey_ || remoteSftpSession_ != session) {
+            remoteSessionKey_ = sessionKey;
+            remoteSftpSession_ = session;
+            remoteSftpRequestId_ = 0;
+            // Use an absolute root so the browser is not trapped in the
+            // login user's home directory. Root listings are requested through
+            // the same SSH session with sudo -n when the shell's sudo ticket
+            // is active (for example after `sudo su`).
+            remoteBrowsePath_ = L"/";
+            remoteListedDir_.clear();
+            remoteListedRequestKey_.clear();
+            remoteFileListedAt_ = 0;
+            remoteFileError_.clear();
+            fileEntries_.clear();
+            remoteFileBusy_ = false;
+            remoteRetryAt_ = 0;
+            remoteRetryCount_ = 0;
+        }
+
+        const std::wstring requestKey =
+            remoteSessionKey_ + L"\n" + remoteBrowsePath_;
+        if (remoteFileBusy_ && remoteSftpRequestId_ != 0) {
+            std::optional<SshDirectoryListing> completed =
+                session->takeSftpDirectoryResult(remoteSftpRequestId_);
+            if (completed) {
+                remoteFileBusy_ = false;
+                remoteSftpRequestId_ = 0;
+                remoteFileError_ = completed->ok ? L"" : completed->error;
+                if (completed->ok) {
+                    remoteBrowsePath_ = completed->path.empty()
+                        ? remoteBrowsePath_ : completed->path;
+                    if (remoteBrowsePath_.empty()) remoteBrowsePath_ = L".";
+                    remoteListedDir_ = remoteBrowsePath_;
+                    fileEntries_.clear();
+                    for (const SshDirectoryEntry& entry : completed->entries) {
+                        const std::wstring path = remoteBrowsePath_ == L"/"
+                            ? L"/" + entry.name
+                            : remoteBrowsePath_ +
+                              (remoteBrowsePath_.back() == L'/' ? L"" : L"/") +
+                              entry.name;
+                        fileEntries_.push_back(
+                            {entry.name, path, entry.isDirectory});
+                    }
+                    std::sort(fileEntries_.begin(), fileEntries_.end(),
+                              [](const FileEntry& left, const FileEntry& right) {
+                                  if (left.isDir != right.isDir)
+                                      return left.isDir;
+                                  return _wcsicmp(left.name.c_str(),
+                                                  right.name.c_str()) < 0;
+                              });
+                    remoteListedRequestKey_ =
+                        remoteSessionKey_ + L"\n" + remoteBrowsePath_;
+                    remoteFileListedAt_ = GetTickCount64();
+                    remoteRetryAt_ = 0;
+                    remoteRetryCount_ = 0;
+                } else {
+                    remoteListedRequestKey_ = requestKey;
+                    remoteRetryAt_ = GetTickCount64() + 1500;
+                    ++remoteRetryCount_;
+                }
+            } else if (session->exited()) {
+                remoteFileBusy_ = false;
+                remoteSftpRequestId_ = 0;
+                remoteFileError_ = L"The SSH session is disconnected.";
+                remoteListedRequestKey_ = requestKey;
+                remoteRetryAt_ = GetTickCount64() + 1500;
+                ++remoteRetryCount_;
+            }
+        }
+
+        const std::wstring nextRequestKey =
+            remoteSessionKey_ + L"\n" + remoteBrowsePath_;
+        // A successful listing can predate `sudo su`. Recheck periodically so
+        // the same authenticated session picks up the sudo timestamp and
+        // exposes directories such as /root without requiring a reconnect.
+        const ULONGLONG now = GetTickCount64();
+        if (!remoteFileBusy_ && remoteFileError_.empty() &&
+            remoteListedRequestKey_ == nextRequestKey &&
+            remoteFileListedAt_ != 0 &&
+            now - remoteFileListedAt_ >= 3000) {
+            remoteListedRequestKey_.clear();
+        }
+        if (remoteListedRequestKey_ != nextRequestKey) {
+            remoteRetryAt_ = 0;
+            remoteRetryCount_ = 0;
+        }
+        const bool retryDue = !remoteFileError_.empty() &&
+            remoteRetryCount_ <= 5 && remoteRetryAt_ != 0 &&
+            GetTickCount64() >= remoteRetryAt_;
+        if (!remoteFileBusy_ &&
+            (remoteListedRequestKey_ != nextRequestKey || retryDue)) {
+            remoteFileError_.clear();
+            remoteSftpRequestId_ =
+                session->requestSftpDirectory(remoteBrowsePath_);
+            if (remoteSftpRequestId_ == 0) {
+                remoteFileError_ = L"The active SSH session is not available.";
+                remoteListedRequestKey_ = nextRequestKey;
+                remoteRetryAt_ = GetTickCount64() + 1500;
+                ++remoteRetryCount_;
+            } else {
+                remoteFileBusy_ = true;
+            }
+        }
+        return;
+    }
+
+    remoteSftpSession_ = nullptr;
+    remoteSftpRequestId_ = 0;
+    remoteFileBusy_ = false;
+    remoteSessionKey_.clear();
+    remoteListedRequestKey_.clear();
+    remoteFileError_.clear();
+    remoteRetryAt_ = 0;
+    remoteRetryCount_ = 0;
+
+    // Follow the focused pane's cwd unless the user navigated manually.
+    if (session && session->cwd() != lastActiveCwd_) {
+        lastActiveCwd_ = session->cwd();
+        browsePath_ = session->cwd();
+    }
+    if (browsePath_ == listedDir_) return;
+    listedDir_ = browsePath_;
+    fileEntries_.clear();
+    if (browsePath_.empty()) return;
+
+    WIN32_FIND_DATAW fd{};
+    HANDLE h = FindFirstFileW((browsePath_ + L"\\*").c_str(), &fd);
+    if (h == INVALID_HANDLE_VALUE) return;
+    do {
+        const std::wstring name = fd.cFileName;
+        if (name == L"." || name == L"..") continue;
+        const bool dir = (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+        fileEntries_.push_back({name, browsePath_ + L"\\" + name, dir});
+        if (fileEntries_.size() >= 500) break;
+    } while (FindNextFileW(h, &fd));
+    FindClose(h);
+
+    std::sort(fileEntries_.begin(), fileEntries_.end(),
+              [](const FileEntry& a, const FileEntry& b) {
+                  if (a.isDir != b.isDir) return a.isDir;
                   return _wcsicmp(a.name.c_str(), b.name.c_str()) < 0;
               });
 }

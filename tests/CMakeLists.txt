@@ -25,6 +25,7 @@ add_executable(liney_tests
   ${CMAKE_CURRENT_SOURCE_DIR}/../src/core/KeyBinding.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../src/core/PowerShellHistory.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../src/core/SshProfiles.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../src/core/SerialProfiles.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../src/core/Shutdown.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../src/core/Update.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../src/core/WindowGeometry.cpp

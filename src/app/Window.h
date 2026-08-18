@@ -43,13 +43,19 @@ private:
     // Layout / rendering.
     void regions(Rect& leftBar, Rect& rightPanel, Rect& tabBar, Rect& panes) const;
     void renderFrame();
-    void drawLeftSidebar(const Rect& r);   // WORKSPACE / SSH / AGENTS
+    void drawLeftSidebar(const Rect& r);   // WORKSPACE / SSH / SERIAL / AGENTS
     void drawFilesPanel(const Rect& r);    // FILES (folder tree, right side)
     std::wstring resolveRepoIcon(const Repo& repo) const;  // config or repo-local
 
     // Workspace management (sidebar).
     void rescanWorkspace();          // scan root + re-add explicit projects_
     void addWorkspaceFolder();       // pick a folder, add as a project, persist
+    void addWorkspaceSsh();          // prompt for an SSH host, add and connect
+    void addWorkspaceSerial();       // prompt for a serial port, add and connect
+    void editWorkspaceSsh(int index);
+    void removeWorkspaceSsh(int index);
+    void editWorkspaceSerial(int index);
+    void removeWorkspaceSerial(int index);
     void removeProject(const Repo& repo);   // drop a project, persist
     void setProjectIcon(const Repo& repo);  // pick an icon for a project, persist
     void toggleProjectArchive(const Repo& repo); // archive/unarchive, persist
@@ -75,10 +81,14 @@ private:
     void cellsForRect(const Rect& r, int& cols, int& rows) const;
     void newTab(const std::wstring& cwd,
                 const SessionContext& context = SessionContext{});
+    TerminalSession* newTabSerial(const SerialProfile& profile);
     TerminalSession* newTabShell(
         const std::wstring& shellCmd, const std::wstring& cwd,
         const SessionContext& context = SessionContext{},
         bool inferWorkspaceContext = true);
+    bool startSshSession(TerminalSession* session,
+                         const SshProfile& profile,
+                         int cols, int rows);
     TerminalSession* openWorkspaceSession(const std::wstring& path,
                                           const std::wstring& projectPath,
                                           const std::wstring& worktreePath = L"",
@@ -151,6 +161,9 @@ private:
 
     // Layout persistence (%USERPROFILE%\.liney\layout.json).
     void saveLayout() const;
+    void savePanelLayout() const;
+    void setSidebarVisible(bool visible);
+    void setFilesPanelVisible(bool visible);
     bool saveWorkspaceSnapshot(const std::wstring& name) const;
     void openWorkspaceSnapshotMenu();
     bool restoreLayout();    // returns true if at least one tab was restored
@@ -183,6 +196,7 @@ private:
     void onMouseDoubleClick(int x, int y); // word (double) / line (triple) select
     void onMouseMove(int x, int y);
     void onMouseUp(int x, int y);
+    void updatePanelWidthFromPointer(int x);
     void onWheel(int delta, int x, int y);
     bool updateCursor();      // WM_SETCURSOR: I-beam over text, resize over dividers
     void openPaneMenu(int x, int y);  // right-click in a pane: copy/paste/find…
@@ -256,6 +270,8 @@ private:
     size_t activeTab_ = 0;
     bool sidebarVisible_ = true;      // left WORKSPACE/SSH/AGENTS panel
     bool filesPanelVisible_ = false;  // right FILES (folder tree) panel (Ctrl+Shift+F)
+    float sidebarWidth_ = 224.0f;     // logical px, restored independently of DPI
+    float filesPanelWidth_ = 224.0f;  // logical px, restored independently of DPI
     mutable bool sidebarEffectiveVisible_ = true;
     mutable bool filesPanelEffectiveVisible_ = false;
     mutable bool sidebarAutoCollapsed_ = false;
@@ -278,6 +294,7 @@ private:
     std::wstring sessionExitHook_;  // command run when a pane closes
     std::wstring appExitHook_;      // command run on app quit
     std::vector<SshProfile> sshHosts_;
+    std::vector<SerialProfile> serialPorts_;
     std::vector<ShellProfile> shellProfiles_;
     std::vector<KeyBinding> keybindings_;
     std::vector<AgentDef> agents_;
@@ -339,7 +356,8 @@ private:
 
     // Hit-test rects rebuilt each frame.
     enum class RowKind { RepoHeader, Worktree, FileUp, FileDir, FileEntry,
-                         SshHost, Agent, RecentProject, ArchiveHeader };
+                         SshHost, SshHeader, SerialPort, Agent, RecentProject,
+                         ArchiveHeader, SerialHeader };
     struct SidebarRow {
         Rect rect;
         RowKind kind = RowKind::RepoHeader;
@@ -355,9 +373,15 @@ private:
     int hoverTab_ = -1;        // tab under the pointer (-1 = none); shows its ×
     int lastMouseX_ = -1, lastMouseY_ = -1;  // client-space pointer, for hover
     Rect workspaceAddRect_{};  // the WORKSPACE "+" (add project) button
+    Rect sshHeaderRect_{};
+    bool sshExpanded_ = true;
     Rect archiveHeaderRect_{};
     bool archiveExpanded_ = false;
+    Rect serialHeaderRect_{};
+    bool serialExpanded_ = true;
     Rect sidebarToggleRect_{}; // tab-strip button; remains visible when collapsed
+    mutable Rect sidebarResizeRect_{};
+    mutable Rect filesResizeRect_{};
     Rect plusRect_{};
     Rect tabOverflowRect_{};   // opens a checked list of every tab
     Rect paneCloseRect_{};     // active split-pane close button
@@ -374,21 +398,35 @@ private:
     // FILES panel: a navigable listing that follows the focused pane's cwd.
     void refreshFileList();   // re-list browsePath_ when it changes
     std::wstring browsePath_;
+    std::wstring remoteBrowsePath_;
+    std::wstring remoteSessionKey_;
+    std::wstring remoteListedRequestKey_;
+    std::wstring remoteListedDir_;
+    ULONGLONG remoteFileListedAt_ = 0;
+    std::wstring remoteFileError_;
     std::wstring lastActiveCwd_;
     std::wstring listedDir_;
     struct FileEntry { std::wstring name; std::wstring path; bool isDir; };
     std::vector<FileEntry> fileEntries_;
     std::vector<std::pair<Rect, std::wstring>> fileBreadcrumbs_;
+    TerminalSession* remoteSftpSession_ = nullptr;
+    SshDirectoryRequestId remoteSftpRequestId_ = 0;
+    bool remoteFileBusy_ = false;
+    ULONGLONG remoteRetryAt_ = 0;
+    int remoteRetryCount_ = 0;
 
     // Selection gesture state (the selection itself is terminal-owned).
     bool selecting_ = false;       // a text-selection drag is in progress
     Pane* dragDivider_ = nullptr;  // split node being resized by a divider drag
+    enum class PanelResize { None, Sidebar, Files };
+    PanelResize panelResize_ = PanelResize::None;
     Pane* selPane_ = nullptr;      // pane whose terminal owns the selection
     int selDragCX_ = -1, selDragCY_ = -1;  // press cell: drags start on leaving it
     bool selDragged_ = false;      // the drag left its press cell at least once
     bool copyOnSelect_ = false;    // copy to clipboard as soon as a selection ends
     bool multiLinePasteWarning_ = true;  // confirm before pasting multiple lines
     bool rememberLayout_ = false;  // restore tabs/panes on launch (opt-in)
+    bool rememberPanelLayout_ = true; // restore side-panel state and widths
     bool splitUseWorkspaceDir_ = false;  // splits open in workspace/home dir vs inherit
     bool powerShellHistoryPerProject_ = false; // opt-in PSReadLine project history
     Osc52Policy osc52Clipboard_ = Osc52Policy::Ask;

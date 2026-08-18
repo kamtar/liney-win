@@ -16,4 +16,12 @@ ResponsivePanelLayout layoutResponsivePanels(
     float totalWidth, bool showLeft, bool showRight, float desiredPanelWidth,
     float compactPanelWidth, float minimumTerminalWidth);
 
+// Variant used when the two panels have independent remembered widths. The
+// legacy overload above keeps callers with symmetric panels source-compatible.
+ResponsivePanelLayout layoutResponsivePanels(
+    float totalWidth, bool showLeft, bool showRight,
+    float leftDesiredWidth, float rightDesiredWidth,
+    float leftCompactWidth, float rightCompactWidth,
+    float minimumTerminalWidth);
+
 } // namespace liney

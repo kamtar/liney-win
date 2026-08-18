@@ -21,6 +21,7 @@
 #include "util/Base64.h"
 #include "core/KeyBinding.h"
 #include "core/SshProfiles.h"
+#include "core/SerialProfiles.h"
 #include "core/Shutdown.h"
 #include "core/Update.h"
 #include "core/WindowGeometry.h"
@@ -110,6 +111,18 @@ void testResponsivePanels() {
     check(layout.leftWidth == 0.0f && layout.rightWidth == 0.0f &&
               layout.centerWidth == 500.0f,
           "single visible panel collapses below its readable width");
+    layout = layoutResponsivePanels(1000.0f, true, true, 320.0f, 180.0f,
+                                    152.0f, 152.0f, 400.0f);
+    check(layout.leftWidth == 320.0f && layout.rightWidth == 180.0f &&
+              layout.centerWidth == 500.0f,
+          "independent remembered panel widths are retained when space allows");
+    layout = layoutResponsivePanels(800.0f, true, true, 320.0f, 180.0f,
+                                    152.0f, 152.0f, 400.0f);
+    check(layout.leftWidth > 234.2f && layout.leftWidth < 234.4f &&
+              layout.rightWidth > 165.6f && layout.rightWidth < 165.8f &&
+              layout.centerWidth == 400.0f && layout.leftCompact &&
+              layout.rightCompact,
+          "independent panel widths shrink toward their own compact widths");
 }
 
 void testUiMetrics() {
@@ -628,12 +641,27 @@ void testPowerShellHistoryIdentity() {
 
 void testSshProfiles() {
     std::printf("Secure SSH profiles\n");
-    check(liney::validSshHost(L"user@example.com"), "accepts user and DNS host");
-    check(liney::validSshHost(L"user@[2001:db8::1]"), "accepts IPv6 host");
+    check(liney::validSshHost(L"example.com"), "accepts a DNS host");
+    check(liney::validSshUser(L"deploy"), "accepts an SSH user");
+    check(liney::validSshHost(L"[2001:db8::1]"), "accepts an IPv6 host");
+    check(!liney::validSshHost(L"user@example.com"),
+          "keeps the user separate from the host");
     check(!liney::validSshHost(L"host -o ProxyCommand=evil"),
           "rejects option injection");
-    liney::SshProfile profile{L"Prod", L"deploy@example.com", 2222,
-                              L"C:\\Keys\\prod key"};
+    int port = 0;
+    check(liney::parseSshPort(L"22", port) && port == 22,
+          "parses the default port");
+    check(liney::parseSshPort(L"65535", port) && port == 65535,
+          "accepts the upper port bound");
+    check(!liney::parseSshPort(L"0", port) &&
+              !liney::parseSshPort(L"65536", port) &&
+              !liney::parseSshPort(L"22 ", port),
+          "rejects invalid port input");
+    liney::SshProfile profile{L"Prod", L"example.com", 2222,
+                              L"C:\\Keys\\prod key", L"deploy"};
+    check(liney::validSshProfile(profile), "accepts a complete SSH profile");
+    check(!liney::validSshProfile({L"\n", L"host", 22, L""}),
+          "rejects control characters in a profile name");
     const std::wstring command = liney::buildSshCommand(profile);
     check(command.find(L"StrictHostKeyChecking=ask") != std::wstring::npos,
           "requires host-key confirmation");
@@ -641,10 +669,111 @@ void testSshProfiles() {
           "includes non-default port");
     check(command.find(L"\"C:\\Keys\\prod key\"") != std::wstring::npos,
           "quotes identity path");
+    check(command.find(L"\"deploy@example.com\"") != std::wstring::npos,
+          "adds the user only when configured");
+    profile.user.clear();
+    const std::wstring noUserCommand = liney::buildSshCommand(profile);
+    check(noUserCommand.find(L"@") == std::wstring::npos &&
+              noUserCommand.find(L"\"example.com\"") != std::wstring::npos,
+          "does not assume a user when the field is empty");
     const std::wstring diagnostic = liney::buildSshDiagnosticCommand(profile);
     check(diagnostic.find(L"BatchMode=yes") != std::wstring::npos &&
               diagnostic.find(L"ConnectTimeout=10") != std::wstring::npos,
           "diagnostics are bounded and never prompt for a password");
+    const std::wstring ssh = liney::buildSshCommand(profile);
+    check(ssh.find(L" -M ") == std::wstring::npos &&
+              ssh.find(L"ControlPath") == std::wstring::npos,
+          "interactive SSH stays compatible with Windows OpenSSH");
+    const std::wstring sftp = liney::buildSftpCommand(profile);
+    check(sftp.find(L"BatchMode=yes") != std::wstring::npos &&
+              sftp.find(L"ControlPath") == std::wstring::npos &&
+              sftp.find(L" -b - ") != std::wstring::npos,
+          "SFTP uses the saved profile without credential prompts");
+}
+
+void testSerialProfiles() {
+    std::printf("Validated serial profiles\n");
+    check(liney::validSerialPortName(L"COM3"), "accepts a normal COM port");
+    check(liney::validSerialPortName(L"com10"), "accepts case-insensitive COM names");
+    check(liney::canonicalSerialPortName(L"com10") == L"\\\\.\\COM10",
+          "canonicalizes ports for CreateFileW");
+    check(liney::validSerialPortName(L"\\\\.\\COM256"),
+          "accepts the canonical spelling through COM256");
+    check(!liney::validSerialPortName(L"COM0"), "rejects COM0");
+    check(!liney::validSerialPortName(L"COM257"), "rejects out-of-range COM ports");
+    check(!liney::validSerialPortName(L"COM3 -o evil"),
+          "rejects non-device input");
+    check(!liney::validSerialPortName(L"C:\\temp\\serial"),
+          "rejects arbitrary device paths");
+
+    liney::SerialProfile profile;
+    profile.name = L"Bench adapter";
+    profile.port = L"COM7";
+    check(liney::validSerialProfile(profile), "accepts the default 8N1 profile");
+    profile.baudRate = 0;
+    check(!liney::validSerialProfile(profile), "rejects a zero baud rate");
+    profile.baudRate = 115200;
+    profile.dataBits = 9;
+    check(!liney::validSerialProfile(profile), "rejects unsupported data bits");
+    profile.dataBits = 8;
+    profile.stopBits = liney::SerialStopBits::OnePointFive;
+    check(!liney::validSerialProfile(profile),
+          "rejects 1.5 stop bits with 8 data bits");
+    profile.dataBits = 5;
+    check(liney::validSerialProfile(profile),
+          "accepts the valid 5-bit 1.5-stop-bit combination");
+    profile.stopBits = liney::SerialStopBits::Two;
+    check(!liney::validSerialProfile(profile),
+          "rejects 2 stop bits with 5 data bits");
+    profile.stopBits = liney::SerialStopBits::One;
+    profile.dataBits = 8;
+    profile.mode = liney::SerialMode::RawText;
+    profile.lineEnding = liney::SerialLineEnding::CarriageReturnLineFeed;
+    check(liney::validSerialProfile(profile),
+          "accepts raw text mode with a configurable line ending");
+    profile.name.clear();
+    check(liney::serialProfileDisplayName(profile) == L"COM7, 115200",
+          "formats an unnamed serial profile as port and baud");
+    profile.name = L"GPS";
+    check(liney::serialProfileDisplayName(profile) == L"GPS, COM7, 115200",
+          "prefixes a named serial profile without duplicating the port");
+    profile.name = L"COM7, 115200";
+    check(liney::serialProfileDisplayName(profile) == L"COM7, 115200",
+          "recognizes legacy generated serial names");
+
+    std::string bytes;
+    check(liney::parseSerialHexInput(L"7e 00 ff 0A", bytes) &&
+              bytes.size() == 4 && static_cast<unsigned char>(bytes[0]) == 0x7e &&
+              static_cast<unsigned char>(bytes[1]) == 0x00 &&
+              static_cast<unsigned char>(bytes[2]) == 0xff &&
+              static_cast<unsigned char>(bytes[3]) == 0x0a,
+          "parses hex while preserving zero and control bytes");
+    check(!liney::parseSerialHexInput(L"0x01", bytes),
+          "rejects 0x prefixes in strict hex input");
+    check(!liney::parseSerialHexInput(L"0", bytes),
+          "rejects an incomplete hex byte");
+    check(!liney::parseSerialHexInput(L"A B", bytes),
+          "rejects whitespace inside a hex byte");
+    check(!liney::parseSerialHexInput(L"GG", bytes),
+          "rejects non-hex characters");
+
+    uint64_t offset = 0;
+    const char raw[] = { '\0', 'A', static_cast<char>(0x7f), 'Z' };
+    const std::string dump = liney::formatSerialHexDump(raw, sizeof(raw), offset);
+    check(offset == 4 && dump.find("00000000") == 0,
+          "raw dump advances its byte offset");
+    check(dump.find("00 41 7f 5a") != std::string::npos &&
+              dump.find("|.A.Z            |") != std::string::npos,
+          "raw dump contains hex and safe ASCII columns");
+    check(dump.find('\x00') == std::string::npos &&
+              dump.find('\x7f') == std::string::npos,
+          "raw dump does not pass device control bytes through");
+
+    const char textRaw[] = {'O', 'K', '\x1b', '\r', '\n', '\0'};
+    const std::string text =
+        liney::formatSerialText(textRaw, sizeof(textRaw));
+    check(text == "OK^[\r\n^@",
+          "raw text view escapes device controls without VT interpretation");
 }
 
 } // namespace
@@ -668,6 +797,7 @@ int main() {
     testKeyBindings();
     testPowerShellHistoryIdentity();
     testSshProfiles();
+    testSerialProfiles();
     testUpdatePolicy();
     testAiSafety();
     std::printf("\n%d checks, %d failures\n", g_checks, g_failures);

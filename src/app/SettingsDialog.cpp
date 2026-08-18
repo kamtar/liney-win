@@ -40,6 +40,7 @@ constexpr int kIdLigatures = 117;
 constexpr int kIdOpenConfig = 118;
 constexpr int kIdResetPage = 119;
 constexpr int kIdPowerShellHistory = 120;
+constexpr int kIdRememberPanels = 121;
 constexpr int kIdPageAppearance = 201;
 constexpr int kIdPageTerminal = 202;
 constexpr int kIdPageWorkspace = 203;
@@ -57,6 +58,7 @@ struct State {
     HWND pasteWarn = nullptr;
     HWND unixTools = nullptr;
     HWND rememberLayout = nullptr;
+    HWND rememberPanelLayout = nullptr;
     HWND splitWorkspaceDir = nullptr;
     HWND powerShellHistory = nullptr;
     HWND autoUpdate = nullptr;
@@ -123,6 +125,7 @@ void resetActivePage(State* st) {
         SendMessageW(st->pasteWarn, BM_SETCHECK, BST_CHECKED, 0);
         SendMessageW(st->unixTools, BM_SETCHECK, BST_CHECKED, 0);
         SendMessageW(st->rememberLayout, BM_SETCHECK, BST_UNCHECKED, 0);
+        SendMessageW(st->rememberPanelLayout, BM_SETCHECK, BST_CHECKED, 0);
         SendMessageW(st->splitWorkspaceDir, BM_SETCHECK, BST_UNCHECKED, 0);
         SendMessageW(st->powerShellHistory, BM_SETCHECK, BST_UNCHECKED, 0);
 #ifndef LINEY_STORE_BUILD
@@ -592,6 +595,11 @@ bool showSettingsDialog(HWND owner, SettingsValues& v) {
     st.rememberLayout = checkbox(
         kIdRemember, L"Restore tabs & panes on launch", v.rememberLayout, r);
     r += 22;
+    st.rememberPanelLayout = checkbox(
+        kIdRememberPanels,
+        L"Remember side-panel visibility and widths",
+        v.rememberPanelLayout, r);
+    r += 22;
     st.splitWorkspaceDir = checkbox(
         kIdSplitDir,
         L"New splits open in the workspace / home dir (else inherit the pane's)",
@@ -744,6 +752,8 @@ bool showSettingsDialog(HWND owner, SettingsValues& v) {
             SendMessageW(st.unixTools, BM_GETCHECK, 0, 0) == BST_CHECKED;
         v.rememberLayout =
             SendMessageW(st.rememberLayout, BM_GETCHECK, 0, 0) == BST_CHECKED;
+        v.rememberPanelLayout =
+            SendMessageW(st.rememberPanelLayout, BM_GETCHECK, 0, 0) == BST_CHECKED;
         v.splitUseWorkspaceDir =
             SendMessageW(st.splitWorkspaceDir, BM_GETCHECK, 0, 0) == BST_CHECKED;
         v.powerShellHistoryPerProject =

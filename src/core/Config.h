@@ -10,6 +10,7 @@
 #include "util/Json.h"
 #include "core/KeyBinding.h"
 #include "core/SshProfiles.h"
+#include "core/SerialProfiles.h"
 
 namespace liney {
 
@@ -39,6 +40,7 @@ struct Config {
     std::wstring sessionExitHook;           // command run when a pane closes
     std::wstring appExitHook;               // command run on app quit
     std::vector<SshProfile> sshHosts;
+    std::vector<SerialProfile> serialPorts;
     std::vector<AgentDef> agents;           // sidebar AGENTS list
     std::vector<KeyBinding> keybindings;
     std::wstring themeName;                  // active preset name (see Themes.h)
@@ -48,6 +50,11 @@ struct Config {
     bool copyOnSelect = false;              // copy to clipboard as soon as a drag ends
     bool multiLinePasteWarning = true;      // confirm before pasting multiple lines
     bool rememberLayout = false;            // restore tabs/panes on launch (off by default)
+    bool rememberPanelLayout = true;        // restore side-panel visibility + widths
+    bool sidebarVisible = true;             // last workspace sidebar state
+    bool filesPanelVisible = false;         // last file navigator state
+    float sidebarWidth = 224.0f;            // logical pixels, before DPI scaling
+    float filesPanelWidth = 224.0f;         // logical pixels, before DPI scaling
     bool splitUseWorkspaceDir = false;      // new splits open in workspace/home dir (else inherit the pane's cwd)
     bool powerShellHistoryPerProject = false; // opt-in PSReadLine history per project/worktree
     bool checkForUpdatesOnStartup = true;  // quiet GitHub release check after launch
@@ -97,7 +104,20 @@ bool writeFileAtomicWithBackup(const std::wstring& path,
 
 // Re-parse config.json, apply `mutate`, write it back atomically. Preserves
 // every other key; refuses to overwrite a config.json that no longer parses
-// (so a hand-edit typo can't cost the user their whole file).
-void updateConfigJson(const std::function<void(Json&)>& mutate);
+// (so a hand-edit typo can't cost the user their whole file). Returns false
+// when the config directory/path is unavailable, the existing JSON is invalid,
+// or the atomic write fails.
+bool updateConfigJson(const std::function<void(Json&)>& mutate);
+
+// Append one validated profile to sshHosts while preserving every other
+// config key. Legacy string entries are retained alongside the new object
+// format. Returns false when validation or persistence fails.
+bool saveSshProfile(const SshProfile& profile);
+bool saveSshProfiles(const std::vector<SshProfile>& profiles);
+
+// Append one validated serial profile to serialPorts while preserving every
+// other config key. Returns false when validation or persistence fails.
+bool saveSerialProfile(const SerialProfile& profile);
+bool saveSerialProfiles(const std::vector<SerialProfile>& profiles);
 
 } // namespace liney

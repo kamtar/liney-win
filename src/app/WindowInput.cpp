@@ -110,13 +110,22 @@ void Window::onChar(wchar_t unit) {
     if (unit >= 0xDC00 && unit <= 0xDFFF) {
         if (pendingHighSurrogate_) {
             wchar_t pair[2] = { pendingHighSurrogate_, unit };
-            sendUtf16(pair, 2);
+            if (auto* s = activeSession(); s && s->serialRawTextMode())
+                s->appendSerialText(pair, 2);
+            else
+                sendUtf16(pair, 2);
             pendingHighSurrogate_ = 0;
         }
         return;
     }
     pendingHighSurrogate_ = 0;
-    sendUtf16(&unit, 1);
+    if (auto* s = activeSession(); s && s->serialRawTextMode()) {
+        // Raw text is deliberately line-oriented. Control keys are handled
+        // in onKeyDown; printable WM_CHAR input is only buffered locally.
+        if (unit >= 0x20 || unit == L'\t') s->appendSerialText(&unit, 1);
+    } else {
+        sendUtf16(&unit, 1);
+    }
 }
 
 bool Window::onKeyDown(WPARAM vk) {
@@ -147,6 +156,40 @@ bool Window::onKeyDown(WPARAM vk) {
         }
     }
 
+    // Raw-text serial sessions have a small local line editor. Unlike a
+    // terminal, arrows and function keys never become device escape bytes;
+    // Enter is the explicit send action.
+    if (auto* s = activeSession(); s && s->serialRawTextMode()) {
+        switch (vk) {
+        case VK_RETURN:
+            s->submitSerialText();
+            swallowNextChar_ = true;
+            return true;
+        case VK_BACK:
+            s->backspaceSerialText();
+            swallowNextChar_ = true;
+            return true;
+        case VK_ESCAPE:
+            s->clearSerialText();
+            swallowNextChar_ = true;
+            return true;
+        case VK_LEFT: case VK_RIGHT: case VK_UP: case VK_DOWN:
+        case VK_HOME: case VK_END: case VK_DELETE:
+        case VK_PRIOR: case VK_NEXT:
+        case VK_F1: case VK_F2: case VK_F3: case VK_F4: case VK_F5:
+        case VK_F6: case VK_F7: case VK_F8: case VK_F9: case VK_F10:
+        case VK_F11: case VK_F12:
+            swallowNextChar_ = true;
+            return true;
+        case VK_INSERT:
+            if ((shift && !ctrl) || (ctrl && !shift)) break;
+            swallowNextChar_ = true;
+            return true;
+        default:
+            break;
+        }
+    }
+
     // Shift+Insert pastes; Ctrl+Insert copies (universal terminal conventions).
     if (vk == VK_INSERT && !alt) {
         if (shift && !ctrl) { paste(); return true; }
@@ -158,8 +201,7 @@ bool Window::onKeyDown(WPARAM vk) {
         Tab* t = activeTab();
         switch (vk) {
         case 'B':
-            sidebarVisible_ = !sidebarVisible_;
-            markRenderDirty();
+            setSidebarVisible(!sidebarVisible_);
             swallowNextChar_ = true;
             return true;
         case 'K':

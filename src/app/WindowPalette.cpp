@@ -297,12 +297,11 @@ void Window::executePaletteAction(int id) {
     if (id >= 4000 && id < 4100) {
         const size_t i = static_cast<size_t>(id - 4000);
         if (i < sshHosts_.size()) {
-            if (auto* session = newTabShell(buildSshCommand(sshHosts_[i]), L"")) {
-                SessionContext context;
-                context.role = SessionRole::Ssh;
-                context.taskName = sshHosts_[i].name;
-                session->setContext(std::move(context));
-            }
+            SessionContext context;
+            context.role = SessionRole::Ssh;
+            context.taskName = sshHosts_[i].name;
+            context.sshProfile = sshHosts_[i];
+            newTabShell(buildSshCommand(sshHosts_[i]), homeDir(), context);
         }
         return;
     }
@@ -371,8 +370,8 @@ void Window::executePaletteAction(int id) {
     case 1: newTab(activeSession() ? activeSession()->cwd() : homeDir()); break;
     case 2: splitActive(SplitDir::Cols); break;
     case 3: splitActive(SplitDir::Rows); break;
-    case 4: sidebarVisible_ = !sidebarVisible_; break;
-    case 5: filesPanelVisible_ = !filesPanelVisible_; break;
+    case 4: setSidebarVisible(!sidebarVisible_); break;
+    case 5: setFilesPanelVisible(!filesPanelVisible_); break;
     case 6: toggleZoom(); break;
     case 7: equalizePanes(); break;
     case 8: openFind(); break;

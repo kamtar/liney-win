@@ -17,16 +17,50 @@ void Window::onMouseDown(int xi, int yi) {
     Rect leftBar, rightPanel, tabBar, panes;
     regions(leftBar, rightPanel, tabBar, panes);
 
+    if (sidebarResizeRect_.contains(x, y)) {
+        panelResize_ = PanelResize::Sidebar;
+        SetCapture(hwnd_);
+        return;
+    }
+    if (filesResizeRect_.contains(x, y)) {
+        panelResize_ = PanelResize::Files;
+        SetCapture(hwnd_);
+        return;
+    }
+
     if ((sidebarVisible_ && leftBar.contains(x, y)) ||
         (filesPanelVisible_ && rightPanel.contains(x, y))) {
         if (sidebarVisible_ && workspaceAddRect_.contains(x, y)) {
             addWorkspaceFolder();
             return;
         }
+        if (filesPanelVisible_ && rightPanel.contains(x, y)) {
+            for (const auto& breadcrumb : fileBreadcrumbs_) {
+                if (!breadcrumb.first.contains(x, y)) continue;
+                const bool remote = activeSession() &&
+                    activeSession()->context().role == SessionRole::Ssh &&
+                    activeSession()->context().sshProfile.has_value();
+                if (remote)
+                    remoteBrowsePath_ = breadcrumb.second;
+                else
+                    browsePath_ = breadcrumb.second;
+                return;
+            }
+        }
         for (const SidebarRow& row : sidebarRows_) {
             if (!row.rect.contains(x, y)) continue;
             if (row.kind == RowKind::ArchiveHeader) {
                 archiveExpanded_ = !archiveExpanded_;
+                markRenderDirty();
+                return;
+            }
+            if (row.kind == RowKind::SerialHeader) {
+                serialExpanded_ = !serialExpanded_;
+                markRenderDirty();
+                return;
+            }
+            if (row.kind == RowKind::SshHeader) {
+                sshExpanded_ = !sshExpanded_;
                 markRenderDirty();
                 return;
             }
@@ -73,12 +107,36 @@ void Window::onMouseDown(int xi, int yi) {
                 break;
             }
             case RowKind::FileUp: {
-                size_t s = browsePath_.find_last_of(L"\\/");
-                if (s != std::wstring::npos) browsePath_ = browsePath_.substr(0, s);
+                const bool remote = activeSession() &&
+                    activeSession()->context().role == SessionRole::Ssh &&
+                    activeSession()->context().sshProfile.has_value();
+                if (remote) {
+                    if (remoteBrowsePath_ == L"/") break;
+                    if (remoteBrowsePath_.empty() || remoteBrowsePath_ == L".") {
+                        remoteBrowsePath_ = L"/";
+                        break;
+                    }
+                    const size_t s = remoteBrowsePath_.find_last_of(L'/');
+                    if (s == std::wstring::npos)
+                        remoteBrowsePath_.clear();
+                    else if (s == 0)
+                        remoteBrowsePath_ = L"/";
+                    else
+                        remoteBrowsePath_ = remoteBrowsePath_.substr(0, s);
+                } else {
+                    const size_t s = browsePath_.find_last_of(L"\\/");
+                    if (s != std::wstring::npos)
+                        browsePath_ = browsePath_.substr(0, s);
+                }
                 break;
             }
             case RowKind::FileDir:
-                browsePath_ = row.path;  // navigate the panel into the directory
+                if (activeSession() &&
+                    activeSession()->context().role == SessionRole::Ssh &&
+                    activeSession()->context().sshProfile.has_value())
+                    remoteBrowsePath_ = row.path;
+                else
+                    browsePath_ = row.path;  // navigate the panel into the directory
                 break;
             case RowKind::FileEntry: {
                 // Insert the filename into the focused pane (quote if needed).
@@ -92,14 +150,19 @@ void Window::onMouseDown(int xi, int yi) {
                 break;
             }
             case RowKind::SshHost:
-                if (row.repo >= 0 && row.repo < static_cast<int>(sshHosts_.size()))
-                    if (TerminalSession* session =
-                            newTabShell(buildSshCommand(sshHosts_[row.repo]), L"")) {
-                        SessionContext context;
-                        context.role = SessionRole::Ssh;
-                        context.taskName = sshHosts_[row.repo].name;
-                        session->setContext(std::move(context));
-                    }
+                if (row.repo >= 0 && row.repo < static_cast<int>(sshHosts_.size())) {
+                    const SshProfile& profile = sshHosts_[row.repo];
+                    SessionContext context;
+                    context.role = SessionRole::Ssh;
+                    context.taskName = profile.name;
+                    context.sshProfile = profile;
+                    newTabShell(buildSshCommand(profile), homeDir(), context);
+                }
+                break;
+            case RowKind::SerialPort:
+                if (row.repo >= 0 &&
+                    row.repo < static_cast<int>(serialPorts_.size()))
+                    newTabSerial(serialPorts_[row.repo]);
                 break;
             case RowKind::Agent:
                 if (row.repo >= 0 && row.repo < static_cast<int>(agents_.size()))
@@ -122,7 +185,7 @@ void Window::onMouseDown(int xi, int yi) {
 
     if (tabBar.contains(x, y)) {
         if (sidebarToggleRect_.contains(x, y)) {
-            sidebarVisible_ = !sidebarVisible_;
+            setSidebarVisible(!sidebarVisible_);
             return;
         }
         if (menuButtonRect_.contains(x, y)) { openMainMenu(); return; }
@@ -165,7 +228,12 @@ void Window::onMouseDown(int xi, int yi) {
         }
         for (const auto& breadcrumb : fileBreadcrumbs_) {
             if (breadcrumb.first.contains(x, y)) {
-                browsePath_ = breadcrumb.second;
+                if (activeSession() &&
+                    activeSession()->context().role == SessionRole::Ssh &&
+                    activeSession()->context().sshProfile.has_value())
+                    remoteBrowsePath_ = breadcrumb.second;
+                else
+                    browsePath_ = breadcrumb.second;
                 return;
             }
         }
@@ -329,6 +397,26 @@ void Window::onMouseDownRight(int xi, int yi) {
     Rect leftBar, rightPanel, tabBar, panes;
     regions(leftBar, rightPanel, tabBar, panes);
 
+    // The workspace + keeps its normal left-click behavior (add a folder),
+    // while its context menu exposes the other kinds of terminal entry.
+    if (sidebarVisible_ && leftBar.contains(x, y) &&
+        workspaceAddRect_.contains(x, y)) {
+        POINT point{xi, yi};
+        ClientToScreen(hwnd_, &point);
+        HMENU menu = CreatePopupMenu();
+        AppendMenuW(menu, MF_STRING, 60, L"SSH");
+        AppendMenuW(menu, MF_STRING, 61, L"Serial");
+        AppendMenuW(menu, MF_STRING, 62, L"Folder");
+        const int action = TrackPopupMenu(
+            menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, point.x, point.y, 0,
+            hwnd_, nullptr);
+        DestroyMenu(menu);
+        if (action == 60) addWorkspaceSsh();
+        else if (action == 61) addWorkspaceSerial();
+        else if (action == 62) addWorkspaceFolder();
+        return;
+    }
+
     // Right-click a tab → context menu (acts on that tab).
     if (tabBar.contains(x, y)) {
         for (size_t i = 0; i < tabRects_.size(); ++i) {
@@ -365,17 +453,63 @@ void Window::onMouseDownRight(int xi, int yi) {
             ClientToScreen(hwnd_, &point);
             HMENU sshMenu = CreatePopupMenu();
             AppendMenuW(sshMenu, MF_STRING, 40, L"Connect");
-            AppendMenuW(sshMenu, MF_STRING, 41, L"Diagnose connection");
+            AppendMenuW(sshMenu, MF_STRING, 41, L"Edit settings…");
+            AppendMenuW(sshMenu, MF_STRING, 42, L"Diagnose connection");
+            AppendMenuW(sshMenu, MF_SEPARATOR, 0, nullptr);
+            AppendMenuW(sshMenu, MF_STRING, 43, L"Remove");
             const int action = TrackPopupMenu(
                 sshMenu, TPM_RETURNCMD | TPM_RIGHTBUTTON, point.x, point.y, 0,
                 hwnd_, nullptr);
             DestroyMenu(sshMenu);
-            const std::wstring command = action == 40
-                ? buildSshCommand(sshHosts_[row.repo])
-                : action == 41
-                    ? buildSshDiagnosticCommand(sshHosts_[row.repo])
-                    : std::wstring();
-            if (!command.empty()) newTabShell(command, L"");
+            if (action == 41) {
+                editWorkspaceSsh(row.repo);
+                return;
+            }
+            if (action == 43) {
+                removeWorkspaceSsh(row.repo);
+                return;
+            }
+            if (action == 40) {
+                const SshProfile& profile = sshHosts_[row.repo];
+                SessionContext context;
+                context.role = SessionRole::Ssh;
+                context.taskName = profile.name;
+                context.sshProfile = profile;
+                newTabShell(buildSshCommand(profile), homeDir(), context);
+            } else if (action == 42) {
+                const std::wstring command =
+                    buildSshDiagnosticCommand(sshHosts_[row.repo]);
+                if (!command.empty()) newTabShell(command, homeDir());
+            }
+            return;
+        }
+        if (row.kind == RowKind::SerialPort) {
+            if (row.repo < 0 || row.repo >= static_cast<int>(serialPorts_.size()))
+                return;
+            POINT point{xi, yi};
+            ClientToScreen(hwnd_, &point);
+            HMENU serialMenu = CreatePopupMenu();
+            AppendMenuW(serialMenu, MF_STRING, 44, L"Connect");
+            AppendMenuW(serialMenu, MF_STRING, 45, L"Edit settings…");
+            AppendMenuW(serialMenu, MF_SEPARATOR, 0, nullptr);
+            AppendMenuW(serialMenu, MF_STRING, 46, L"Remove");
+            const int action = TrackPopupMenu(
+                serialMenu, TPM_RETURNCMD | TPM_RIGHTBUTTON, point.x, point.y,
+                0, hwnd_, nullptr);
+            DestroyMenu(serialMenu);
+            if (action == 44) newTabSerial(serialPorts_[row.repo]);
+            else if (action == 45) editWorkspaceSerial(row.repo);
+            else if (action == 46) removeWorkspaceSerial(row.repo);
+            return;
+        }
+        if (row.kind == RowKind::SshHeader) {
+            sshExpanded_ = !sshExpanded_;
+            markRenderDirty();
+            return;
+        }
+        if (row.kind == RowKind::SerialHeader) {
+            serialExpanded_ = !serialExpanded_;
+            markRenderDirty();
             return;
         }
         if (row.kind != RowKind::RepoHeader &&
@@ -576,6 +710,10 @@ void Window::onMouseDownRight(int xi, int yi) {
 void Window::onMouseMove(int xi, int yi) {
     lastMouseX_ = xi;
     lastMouseY_ = yi;
+    if (panelResize_ != PanelResize::None) {
+        updatePanelWidthFromPointer(xi);
+        return;
+    }
     // Track which tab the pointer is over so its × button shows (and so the ×
     // hover-highlights). Only meaningful while not dragging.
     if (tabDragIndex_ < 0 && !selecting_ && !dragDivider_) {
@@ -632,6 +770,13 @@ void Window::onMouseMove(int xi, int yi) {
 }
 
 void Window::onMouseUp(int xi, int yi) {
+    if (panelResize_ != PanelResize::None) {
+        panelResize_ = PanelResize::None;
+        savePanelLayout();
+        ReleaseCapture();
+        markRenderDirty();
+        return;
+    }
     if (tabDragIndex_ >= 0) {
         tabDragIndex_ = -1;
         ReleaseCapture();
@@ -655,6 +800,28 @@ void Window::onMouseUp(int xi, int yi) {
         if (!forwardMouse(1 /*release*/, 1, xi, yi))
             mouseButtonsDown_ &= ~(1 << 1);
     }
+}
+
+void Window::updatePanelWidthFromPointer(int xi) {
+    RECT client{};
+    if (!GetClientRect(hwnd_, &client)) return;
+    const float windowWidth = static_cast<float>(client.right - client.left);
+    const float scale = std::max(0.01f, metrics_.uiScale);
+    const float minWidth = 144.0f;
+    const float maxWidth = 640.0f;
+    const float physicalWidth = panelResize_ == PanelResize::Sidebar
+        ? static_cast<float>(xi)
+        : windowWidth - static_cast<float>(xi);
+    const float logicalWidth = physicalWidth / scale;
+    const float* target = nullptr;
+    if (panelResize_ == PanelResize::Sidebar) target = &sidebarWidth_;
+    else if (panelResize_ == PanelResize::Files) target = &filesPanelWidth_;
+    if (!target) return;
+    const float clamped = std::clamp(logicalWidth, minWidth, maxWidth);
+    if (*target == clamped) return;
+    if (panelResize_ == PanelResize::Sidebar) sidebarWidth_ = clamped;
+    else filesPanelWidth_ = clamped;
+    markRenderDirty();
 }
 
 bool Window::paneCellAt(const Pane* p, int px, int py, int& cx, int& cy) const {
@@ -767,6 +934,10 @@ void Window::paste() {
                         utf8.data(), bytes, nullptr, nullptr);
 
     s->scrollToBottom();
+    if (s->serialRawTextMode()) {
+        s->appendSerialText(norm.c_str(), norm.size());
+        return;
+    }
     if (s->bracketedPaste()) {
         const std::string out = "\x1b[200~" + utf8 + "\x1b[201~";
         s->sendBytes(out.data(), out.size());
@@ -841,6 +1012,12 @@ bool Window::updateCursor() {
     Rect leftBar, rightPanel, tabBar, panes;
     regions(leftBar, rightPanel, tabBar, panes);
 
+    if (sidebarResizeRect_.contains(x, y) || filesResizeRect_.contains(x, y) ||
+        panelResize_ != PanelResize::None) {
+        SetCursor(LoadCursorW(nullptr, IDC_SIZEWE));
+        return true;
+    }
+
     if (panes.contains(x, y)) {
         if (paneCloseRect_.contains(x, y)) {
             SetCursor(LoadCursorW(nullptr, IDC_ARROW));
@@ -879,6 +1056,12 @@ void Window::openPaneMenu(int xi, int yi) {
     AppendMenuW(m, MF_STRING, 3, L"Select all\tCtrl+Shift+A");
     AppendMenuW(m, MF_STRING, 4, L"Find in terminal…\tCtrl+F");
     TerminalSession* menuSession = activeSession();
+    const bool serialSession = menuSession && menuSession->isSerial();
+    if (serialSession) {
+        AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(m, MF_STRING | (menuSession->exited() ? MF_GRAYED : 0),
+                    42, L"Send hex bytes…");
+    }
     if (menuSession && menuSession->exited()) {
         AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
         AppendMenuW(m, MF_STRING, 41, L"Restart shell in this directory");
@@ -971,6 +1154,19 @@ void Window::openPaneMenu(int xi, int yi) {
     case 2: paste(); break;
     case 3: selectAllActive(); break;
     case 4: openFind(); break;
+    case 42:
+        if (menuSession && menuSession->isSerial()) {
+            const std::wstring input = inputBox(
+                hwnd_, L"Send serial bytes",
+                L"Hex bytes (for example: 7e 00 ff):", L"");
+            if (!input.empty()) {
+                std::wstring error;
+                if (!menuSession->sendSerialHexInput(input, &error))
+                    MessageBoxW(hwnd_, error.c_str(), L"Liney - serial input",
+                                MB_OK | MB_ICONWARNING);
+            }
+        }
+        break;
     case 5: closeActivePaneConfirming(); break;
     case 6: closeOtherPanes(); break;
     case 7: splitActive(SplitDir::Cols); break;

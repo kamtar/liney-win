@@ -2,11 +2,17 @@
 
 #include <cstdint>
 #include <chrono>
+#include <memory>
 #include <string>
+#include <optional>
 #include <vector>
 #include <utility>
 
 #include "pty/ConPty.h"
+#include "serial/SerialPort.h"
+#include "core/SerialProfiles.h"
+#include "core/SshConnection.h"
+#include "core/SshProfiles.h"
 #include "render/Cell.h"
 #include "vt/Notification.h"
 #include "vt/Terminal.h"
@@ -28,7 +34,7 @@ struct CommandBlock {
     bool bookmarked = false;
 };
 
-enum class SessionRole { Shell, Ssh, Agent };
+enum class SessionRole { Shell, Ssh, Serial, Agent };
 enum class AgentActivity { Idle, Running, Waiting, NeedsInput, Done, Failed };
 
 struct SessionContext {
@@ -43,6 +49,10 @@ struct SessionContext {
     std::wstring taskName;
     std::wstring agentName;
     std::wstring testCommand;
+    // Set for SSH sessions opened from the saved SSH sidebar. The FILES panel
+    // uses the saved profile to make a remote directory request on the live
+    // SSH connection (SFTP, with a sudo-backed root fallback when available).
+    std::optional<SshProfile> sshProfile;
 };
 
 struct InlineImage {
@@ -57,9 +67,10 @@ struct InlineImage {
 // screen is snapshotted into a Grid for rendering. This is the unit a pane
 // hosts; tabs/splits compose many of these.
 //
-// Not movable/copyable (owns a reader thread and a mutex); always heap-owned
-// via unique_ptr. terminal_ is declared before pty_ so the reader thread, which
-// calls terminal_.write, is joined before terminal_ is destroyed.
+// Not movable/copyable (owns reader threads and mutexes); always heap-owned via
+// unique_ptr. terminal_ is declared before both transports so their reader
+// threads, which call terminal_.write, are joined before terminal_ is
+// destroyed.
 class TerminalSession {
 public:
     TerminalSession() = default;
@@ -72,6 +83,19 @@ public:
     // `scrollback` is the max number of history lines to retain.
     bool start(const std::wstring& shell, const std::wstring& cwd, int cols,
                int rows, int scrollback = 10000);
+
+    // Open a Windows COM port and feed its byte stream through the same VT
+    // parser/grid used by ConPTY shells. `scrollback` has the same meaning as
+    // start(). The profile is retained so the parent can persist/reopen it.
+    bool startSerial(const SerialProfile& profile, int cols, int rows,
+                     int scrollback = 10000);
+
+    // Start an embedded SSH shell. The SSH transport owns one authenticated
+    // session containing both the interactive shell and the future SFTP
+    // subsystem; local shells continue to use ConPTY.
+    bool startSsh(const SshProfile& profile, int cols, int rows,
+                  int scrollback = 10000,
+                  const SshCredentials& credentials = {});
 
     void sendBytes(const char* data, size_t len);
     void resize(int cols, int rows, int cellWidthPx, int cellHeightPx);
@@ -119,11 +143,50 @@ public:
                                      screenH);
     }
 
-    bool exited() const { return pty_.hasExited(); }
+    bool exited() const {
+        if (isSsh()) return ssh_->hasExited();
+        return isSerial() ? serial_.hasExited() : pty_.hasExited();
+    }
     // True while the shell is running a command (has a child process), so the
     // UI can warn before closing a tab/pane that's doing work.
-    bool hasRunningChild() const { return pty_.hasRunningChild(); }
-    unsigned long shellPid() const { return pty_.processId(); }
+    bool hasRunningChild() const {
+        if (isSsh()) return false;
+        return isSerial() ? serial_.hasRunningChild() : pty_.hasRunningChild();
+    }
+    unsigned long shellPid() const {
+        if (isSsh()) return 0;
+        return isSerial() ? serial_.processId() : pty_.processId();
+    }
+    bool isSsh() const { return ssh_ != nullptr; }
+    bool isSerial() const { return serialProfile_.has_value(); }
+    bool serialRawTextMode() const {
+        return isSerial() && serialProfile_->mode == SerialMode::RawText;
+    }
+    bool serialRawMode() const {
+        return isSerial() && serialProfile_->mode == SerialMode::RawHexMonitor;
+    }
+    const SerialProfile* serialProfile() const {
+        return serialProfile_ ? &*serialProfile_ : nullptr;
+    }
+    // Queue a typed directory listing on the same authenticated SSH session.
+    // The request and result APIs are intentionally transport-neutral for the
+    // FILES panel; neither method calls libssh2 on the UI thread.
+    SshDirectoryRequestId requestSftpDirectory(
+        const std::wstring& path, std::size_t maximumEntries = 500);
+    std::optional<SshDirectoryListing> takeSftpDirectoryResult(
+        SshDirectoryRequestId requestId);
+    DWORD serialErrorCode() const { return serial_.errorCode(); }
+    std::wstring serialErrorMessage() const { return serial_.errorMessage(); }
+    // Parse and send exact byte pairs such as "7e 00 ff". This is available
+    // in both serial display modes so a parent dialog can offer a hex action.
+    bool sendSerialHexInput(const std::wstring& input,
+                            std::wstring* error = nullptr);
+    // Raw-text serial mode keeps a local line editor. Printable input is shown
+    // immediately, but only submit sends it to the device.
+    void appendSerialText(const wchar_t* text, size_t len);
+    void backspaceSerialText();
+    void submitSerialText();
+    void clearSerialText();
     AgentActivity agentActivity() const;
     const std::wstring& cwd() const { return cwd_; }
     const std::wstring& title() const { return title_; }
@@ -165,6 +228,8 @@ private:
 
     Terminal terminal_;
     ConPty pty_;
+    SerialPort serial_;
+    std::unique_ptr<SshConnection> ssh_;
     Grid grid_;
     std::wstring cwd_;
     std::wstring title_;
@@ -183,6 +248,9 @@ private:
     std::string clipboardRequest_;
     std::vector<InlineImage> inlineImages_;
     SessionContext context_;
+    std::optional<SerialProfile> serialProfile_;
+    std::wstring serialTextLine_;
+    uint64_t rawSerialOffset_ = 0;
     AgentActivity reportedAgentActivity_ = AgentActivity::Idle;
 };
 

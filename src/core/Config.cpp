@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <fstream>
 #include <sstream>
@@ -43,6 +44,19 @@ std::string wideToUtf8(const std::wstring& w) {
     return s;
 }
 
+bool splitLegacySshTarget(const std::wstring& value, std::wstring& user,
+                          std::wstring& host) {
+    const size_t at = value.find(L'@');
+    if (at == std::wstring::npos) {
+        user.clear();
+        host = value;
+        return validSshHost(host);
+    }
+    user = value.substr(0, at);
+    host = value.substr(at + 1);
+    return validSshUser(user) && !user.empty() && validSshHost(host);
+}
+
 Color hexToColor(const std::string& s, Color dflt) {
     std::string h = (!s.empty() && s[0] == '#') ? s.substr(1) : s;
     if (h.size() != 6) return dflt;
@@ -61,6 +75,91 @@ std::string colorToHex(const Color& c) {
     char buf[8]{};
     std::snprintf(buf, sizeof(buf), "#%02X%02X%02X", c.r, c.g, c.b);
     return buf;
+}
+
+const char* serialParityName(SerialParity parity) {
+    switch (parity) {
+    case SerialParity::Odd: return "odd";
+    case SerialParity::Even: return "even";
+    case SerialParity::Mark: return "mark";
+    case SerialParity::Space: return "space";
+    case SerialParity::None: return "none";
+    }
+    return "none";
+}
+
+const char* serialStopBitsName(SerialStopBits stopBits) {
+    switch (stopBits) {
+    case SerialStopBits::OnePointFive: return "1.5";
+    case SerialStopBits::Two: return "2";
+    case SerialStopBits::One: return "1";
+    }
+    return "1";
+}
+
+const char* serialModeName(SerialMode mode) {
+    if (mode == SerialMode::RawText) return "rawText";
+    return mode == SerialMode::RawHexMonitor ? "rawHex" : "terminal";
+}
+
+const char* serialLineEndingName(SerialLineEnding ending) {
+    switch (ending) {
+    case SerialLineEnding::LineFeed: return "lf";
+    case SerialLineEnding::CarriageReturnLineFeed: return "crlf";
+    case SerialLineEnding::None: return "none";
+    case SerialLineEnding::CarriageReturn: return "cr";
+    }
+    return "cr";
+}
+
+bool parseSerialParity(const std::string& value, SerialParity& parity) {
+    if (value == "odd") parity = SerialParity::Odd;
+    else if (value == "even") parity = SerialParity::Even;
+    else if (value == "mark") parity = SerialParity::Mark;
+    else if (value == "space") parity = SerialParity::Space;
+    else if (value.empty() || value == "none") parity = SerialParity::None;
+    else return false;
+    return true;
+}
+
+bool parseSerialStopBits(const std::string& value, SerialStopBits& stopBits) {
+    if (value == "1.5") stopBits = SerialStopBits::OnePointFive;
+    else if (value == "2") stopBits = SerialStopBits::Two;
+    else if (value.empty() || value == "1") stopBits = SerialStopBits::One;
+    else return false;
+    return true;
+}
+
+bool parseSerialMode(const std::string& value, SerialMode& mode) {
+    if (value == "rawHex" || value == "raw" || value == "hex")
+        mode = SerialMode::RawHexMonitor;
+    else if (value == "rawText" || value == "text")
+        mode = SerialMode::RawText;
+    else if (value.empty() || value == "terminal")
+        mode = SerialMode::Terminal;
+    else
+        return false;
+    return true;
+}
+
+bool parseSerialLineEnding(const std::string& value,
+                           SerialLineEnding& ending) {
+    if (value == "lf") ending = SerialLineEnding::LineFeed;
+    else if (value == "crlf") ending = SerialLineEnding::CarriageReturnLineFeed;
+    else if (value == "none") ending = SerialLineEnding::None;
+    else if (value.empty() || value == "cr") ending = SerialLineEnding::CarriageReturn;
+    else return false;
+    return true;
+}
+
+bool jsonUnsigned(const Json& value, uint32_t max, uint32_t& result) {
+    if (value.type() != Json::Type::Number) return false;
+    const double number = value.asNumber();
+    if (!std::isfinite(number) || number < 0.0 || number > max ||
+        std::floor(number) != number)
+        return false;
+    result = static_cast<uint32_t>(number);
+    return true;
 }
 
 std::string readFile(const std::wstring& path) {
@@ -88,6 +187,11 @@ std::string defaultJson(const Config& c) {
     j.set("copyOnSelect", Json::boolean(c.copyOnSelect));
     j.set("multiLinePasteWarning", Json::boolean(c.multiLinePasteWarning));
     j.set("rememberLayout", Json::boolean(c.rememberLayout));
+    j.set("rememberPanelLayout", Json::boolean(c.rememberPanelLayout));
+    j.set("sidebarVisible", Json::boolean(c.sidebarVisible));
+    j.set("filesPanelVisible", Json::boolean(c.filesPanelVisible));
+    j.set("sidebarWidth", Json::number(c.sidebarWidth));
+    j.set("filesPanelWidth", Json::number(c.filesPanelWidth));
     j.set("splitUseWorkspaceDir", Json::boolean(c.splitUseWorkspaceDir));
     j.set("powerShellHistoryPerProject",
           Json::boolean(c.powerShellHistoryPerProject));
@@ -111,11 +215,26 @@ std::string defaultJson(const Config& c) {
         Json item = Json::object();
         item.set("name", Json::str(wideToUtf8(h.name)));
         item.set("host", Json::str(wideToUtf8(h.host)));
+        item.set("user", Json::str(wideToUtf8(h.user)));
         item.set("port", Json::number(h.port));
         item.set("identityFile", Json::str(wideToUtf8(h.identityFile)));
         hosts.push(std::move(item));
     }
     j.set("sshHosts", std::move(hosts));
+    Json serialPorts = Json::array();
+    for (const auto& p : c.serialPorts) {
+        Json item = Json::object();
+        item.set("name", Json::str(wideToUtf8(p.name)));
+        item.set("port", Json::str(wideToUtf8(p.port)));
+        item.set("baudRate", Json::number(p.baudRate));
+        item.set("dataBits", Json::number(p.dataBits));
+        item.set("parity", Json::str(serialParityName(p.parity)));
+        item.set("stopBits", Json::str(serialStopBitsName(p.stopBits)));
+        item.set("mode", Json::str(serialModeName(p.mode)));
+        item.set("lineEnding", Json::str(serialLineEndingName(p.lineEnding)));
+        serialPorts.push(std::move(item));
+    }
+    j.set("serialPorts", std::move(serialPorts));
     Json agents = Json::array();
     for (const auto& a : c.agents) {
         Json item = Json::object();
@@ -254,22 +373,80 @@ Config loadConfig() {
     cfg.sessionStartHook = utf8ToWide(j["hooks"]["sessionStart"].asString());
     cfg.sessionExitHook = utf8ToWide(j["hooks"]["sessionExit"].asString());
     cfg.appExitHook = utf8ToWide(j["hooks"]["appExit"].asString());
-    // sshHosts: ["user@host", ...]
+    // sshHosts accepts the old ["user@host", ...] form as well as the
+    // separate {"user": ..., "host": ...} form.
     if (j["sshHosts"].isArray()) {
         for (const Json& host : j["sshHosts"].items()) {
             if (host.type() == Json::Type::String) {
                 const std::wstring value = utf8ToWide(host.asString());
-                if (validSshHost(value)) cfg.sshHosts.push_back({value, value, 22, L""});
+                SshProfile profile;
+                if (splitLegacySshTarget(value, profile.user, profile.host)) {
+                    profile.name = value;
+                    cfg.sshHosts.push_back(std::move(profile));
+                }
             } else if (host.isObject()) {
                 SshProfile profile;
                 profile.host = utf8ToWide(host["host"].asString());
+                if (host.contains("user")) {
+                    profile.user = utf8ToWide(host["user"].asString());
+                } else {
+                    std::wstring legacyHost;
+                    std::wstring legacyUser;
+                    if (!splitLegacySshTarget(profile.host, legacyUser,
+                                              legacyHost))
+                        continue;
+                    profile.user = std::move(legacyUser);
+                    profile.host = std::move(legacyHost);
+                }
                 profile.name = utf8ToWide(host["name"].asString());
                 profile.port = static_cast<int>(host["port"].asNumber(22));
                 profile.identityFile = utf8ToWide(host["identityFile"].asString());
-                if (profile.name.empty()) profile.name = profile.host;
-                if (validSshHost(profile.host) && profile.port >= 1 &&
+                if (profile.name.empty()) profile.name = sshProfileTarget(profile);
+                if (validSshHost(profile.host) && validSshUser(profile.user) &&
+                    profile.port >= 1 &&
                     profile.port <= 65535) cfg.sshHosts.push_back(std::move(profile));
             }
+        }
+    }
+    if (j["serialPorts"].isArray()) {
+        for (const Json& item : j["serialPorts"].items()) {
+            if (!item.isObject() || cfg.serialPorts.size() >= 128) continue;
+            SerialProfile profile;
+            profile.name = utf8ToWide(item["name"].asString());
+            profile.port = utf8ToWide(item["port"].asString());
+            uint32_t number = 0;
+            if (item.contains("baudRate") &&
+                !jsonUnsigned(item["baudRate"], 4'000'000, number))
+                continue;
+            if (item.contains("baudRate")) profile.baudRate = number;
+            if (item.contains("dataBits")) {
+                if (!jsonUnsigned(item["dataBits"], 8, number) || number < 5)
+                    continue;
+                profile.dataBits = static_cast<uint8_t>(number);
+            }
+            if (item.contains("parity")) {
+                if (item["parity"].type() != Json::Type::String ||
+                    !parseSerialParity(item["parity"].asString(), profile.parity))
+                    continue;
+            }
+            if (item.contains("stopBits")) {
+                if (item["stopBits"].type() != Json::Type::String ||
+                    !parseSerialStopBits(item["stopBits"].asString(), profile.stopBits))
+                    continue;
+            }
+            if (item.contains("mode")) {
+                if (item["mode"].type() != Json::Type::String ||
+                    !parseSerialMode(item["mode"].asString(), profile.mode))
+                    continue;
+            }
+            if (item.contains("lineEnding")) {
+                if (item["lineEnding"].type() != Json::Type::String ||
+                    !parseSerialLineEnding(item["lineEnding"].asString(),
+                                           profile.lineEnding))
+                    continue;
+            }
+            if (validSerialProfile(profile))
+                cfg.serialPorts.push_back(std::move(profile));
         }
     }
     // agents: [{ name, command, cwd }]
@@ -343,6 +520,18 @@ Config loadConfig() {
         cfg.multiLinePasteWarning = j["multiLinePasteWarning"].asBool(true);
     if (j.contains("rememberLayout"))
         cfg.rememberLayout = j["rememberLayout"].asBool(false);
+    if (j.contains("rememberPanelLayout"))
+        cfg.rememberPanelLayout = j["rememberPanelLayout"].asBool(true);
+    if (j.contains("sidebarVisible"))
+        cfg.sidebarVisible = j["sidebarVisible"].asBool(true);
+    if (j.contains("filesPanelVisible"))
+        cfg.filesPanelVisible = j["filesPanelVisible"].asBool(false);
+    if (j.contains("sidebarWidth"))
+        cfg.sidebarWidth = static_cast<float>(
+            j["sidebarWidth"].asNumber(cfg.sidebarWidth));
+    if (j.contains("filesPanelWidth"))
+        cfg.filesPanelWidth = static_cast<float>(
+            j["filesPanelWidth"].asNumber(cfg.filesPanelWidth));
     if (j.contains("splitUseWorkspaceDir"))
         cfg.splitUseWorkspaceDir = j["splitUseWorkspaceDir"].asBool(false);
     if (j.contains("powerShellHistoryPerProject"))
@@ -412,6 +601,12 @@ Config loadConfig() {
     if (cfg.fontSize < 6.0f || cfg.fontSize > 96.0f) cfg.fontSize = 16.0f;
     if (cfg.scrollback < 0) cfg.scrollback = 0;
     if (cfg.scrollback > 1000000) cfg.scrollback = 1000000;  // sane upper bound
+    if (!std::isfinite(cfg.sidebarWidth) || cfg.sidebarWidth < 144.0f ||
+        cfg.sidebarWidth > 640.0f)
+        cfg.sidebarWidth = 224.0f;
+    if (!std::isfinite(cfg.filesPanelWidth) || cfg.filesPanelWidth < 144.0f ||
+        cfg.filesPanelWidth > 640.0f)
+        cfg.filesPanelWidth = 224.0f;
     return cfg;
 }
 
@@ -420,9 +615,9 @@ namespace {
 // survives the rewrite; the Json type preserves object key order, so the file
 // stays stable.
 template <class Fn>
-void updateConfigFile(Fn mutate) {
+bool updateConfigFile(Fn mutate) {
     const std::wstring dir = configDir();
-    if (dir.empty()) return;
+    if (dir.empty()) return false;
     const std::wstring path = dir + L"\\config.json";
     const std::string text = readFile(path);
     Json j = Json::object();
@@ -432,13 +627,14 @@ void updateConfigFile(Fn mutate) {
         // The file exists but doesn't parse (hand-edit typo, corruption).
         // Skip the save: dropping one setting update is recoverable, silently
         // rewriting the file with a near-empty object is not.
-        if (!ok || !j.isObject()) return;
+        if (!ok || !j.isObject()) return false;
         if (j["schemaVersion"].asNumber(kConfigSchemaVersion) >
-            kConfigSchemaVersion) return;
+            kConfigSchemaVersion)
+            return false;
     }
     mutate(j);
     j.set("schemaVersion", Json::number(kConfigSchemaVersion));
-    writeFileAtomicWithBackup(path, j.dump(2));
+    return writeFileAtomicWithBackup(path, j.dump(2));
 }
 } // namespace
 
@@ -481,8 +677,85 @@ bool writeFileAtomicWithBackup(const std::wstring& path,
     return writeFileAtomic(path, content);
 }
 
-void updateConfigJson(const std::function<void(Json&)>& mutate) {
-    updateConfigFile([&](Json& j) { mutate(j); });
+bool updateConfigJson(const std::function<void(Json&)>& mutate) {
+    return updateConfigFile([&](Json& j) { mutate(j); });
+}
+
+bool saveSshProfile(const SshProfile& profile) {
+    if (!validSshProfile(profile)) return false;
+    return updateConfigJson([&](Json& root) {
+        Json hosts = root["sshHosts"].isArray()
+                         ? root["sshHosts"]
+                         : Json::array();
+        Json item = Json::object();
+        item.set("name", Json::str(wideToUtf8(profile.name)));
+        item.set("host", Json::str(wideToUtf8(profile.host)));
+        item.set("user", Json::str(wideToUtf8(profile.user)));
+        item.set("port", Json::number(profile.port));
+        item.set("identityFile", Json::str(wideToUtf8(profile.identityFile)));
+        hosts.push(std::move(item));
+        root.set("sshHosts", std::move(hosts));
+    });
+}
+
+bool saveSshProfiles(const std::vector<SshProfile>& profiles) {
+    for (const SshProfile& profile : profiles)
+        if (!validSshProfile(profile)) return false;
+    return updateConfigJson([&](Json& root) {
+        Json hosts = Json::array();
+        for (const SshProfile& profile : profiles) {
+            Json item = Json::object();
+            item.set("name", Json::str(wideToUtf8(profile.name)));
+            item.set("host", Json::str(wideToUtf8(profile.host)));
+            item.set("user", Json::str(wideToUtf8(profile.user)));
+            item.set("port", Json::number(profile.port));
+            item.set("identityFile", Json::str(wideToUtf8(profile.identityFile)));
+            hosts.push(std::move(item));
+        }
+        root.set("sshHosts", std::move(hosts));
+    });
+}
+
+bool saveSerialProfile(const SerialProfile& profile) {
+    if (!validSerialProfile(profile)) return false;
+    return updateConfigJson([&](Json& root) {
+        Json ports = root["serialPorts"].isArray()
+                         ? root["serialPorts"]
+                         : Json::array();
+        Json item = Json::object();
+        item.set("name", Json::str(wideToUtf8(profile.name)));
+        item.set("port", Json::str(wideToUtf8(profile.port)));
+        item.set("baudRate", Json::number(profile.baudRate));
+        item.set("dataBits", Json::number(profile.dataBits));
+        item.set("parity", Json::str(serialParityName(profile.parity)));
+        item.set("stopBits", Json::str(serialStopBitsName(profile.stopBits)));
+        item.set("mode", Json::str(serialModeName(profile.mode)));
+        item.set("lineEnding", Json::str(serialLineEndingName(profile.lineEnding)));
+        ports.push(std::move(item));
+        root.set("serialPorts", std::move(ports));
+    });
+}
+
+bool saveSerialProfiles(const std::vector<SerialProfile>& profiles) {
+    for (const SerialProfile& profile : profiles)
+        if (!validSerialProfile(profile)) return false;
+    return updateConfigJson([&](Json& root) {
+        Json ports = Json::array();
+        for (const SerialProfile& profile : profiles) {
+            Json item = Json::object();
+            item.set("name", Json::str(wideToUtf8(profile.name)));
+            item.set("port", Json::str(wideToUtf8(profile.port)));
+            item.set("baudRate", Json::number(profile.baudRate));
+            item.set("dataBits", Json::number(profile.dataBits));
+            item.set("parity", Json::str(serialParityName(profile.parity)));
+            item.set("stopBits", Json::str(serialStopBitsName(profile.stopBits)));
+            item.set("mode", Json::str(serialModeName(profile.mode)));
+            item.set("lineEnding",
+                     Json::str(serialLineEndingName(profile.lineEnding)));
+            ports.push(std::move(item));
+        }
+        root.set("serialPorts", std::move(ports));
+    });
 }
 
 } // namespace liney

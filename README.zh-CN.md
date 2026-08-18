@@ -225,7 +225,12 @@ TerminalSession = Terminal + ConPty + Grid
 ## 🗺️ 路线图
 
 已完成与待办(含与 macOS liney 的对照)见 [`ROADMAP.md`](ROADMAP.md)。仍待后续:
-鼠标上报(受 ConPTY 限制)、SFTP 远程文件树、glyph atlas 渲染、原生 tmux control-mode。
+鼠标上报(受 ConPTY 限制)、glyph atlas 渲染、原生 tmux control-mode。
+SFTP 文件树使用嵌入式 libssh2 传输，与终端共享同一个已认证的 SSH 连接；
+密码、密钥口令和键盘交互回答会直接在终端中询问，只在当前会话内存中保留。
+远程浏览器从 `/` 开始；执行 `sudo su` 后，会在同一 SSH 连接上使用 sudo
+权限读取 root 目录元数据（服务器允许时）。
+密码或密钥口令只在本次会话内存中使用，不会写入配置文件。
 
 ## 🤝 贡献
 

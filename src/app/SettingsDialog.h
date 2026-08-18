@@ -24,6 +24,7 @@ struct SettingsValues {
     bool multiLinePasteWarning = true;  // confirm multi-line pastes
     bool unixTools = true;           // add Git's usr/bin to PATH for shells
     bool rememberLayout = false;     // restore tabs/panes on launch
+    bool rememberPanelLayout = true; // restore side-panel visibility and widths
     bool splitUseWorkspaceDir = false;  // splits open in workspace/home dir
     bool powerShellHistoryPerProject = false; // PSReadLine history per project/worktree
     bool checkForUpdatesOnStartup = true;

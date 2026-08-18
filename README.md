@@ -86,7 +86,8 @@ nothing but the OS.
   **Open / Open folder in File Explorer / Set icon… / Remove from workspace**.
   Removing an
   auto-discovered repository stays persisted across rescans.
-- A right-side **folder tree** that follows the focused pane
+- A right-side **folder tree** that follows the focused pane; saved SSH sessions
+  expose the same authenticated connection through an embedded **SFTP** browser
 - **SSH** hosts and **agent** sessions, each with its own icon, one click to open
 - **Layout persistence** — tabs + split tree + per-pane cwd restored next launch
 
@@ -320,7 +321,12 @@ evidence live in [`docs/QUALITY_GATES.md`](docs/QUALITY_GATES.md) and
 
 Done & remaining items (with a macOS-liney comparison) live in
 [`ROADMAP.md`](ROADMAP.md); per-release changes in [`CHANGELOG.md`](CHANGELOG.md).
-Still pending: SFTP remote file tree and native tmux control-mode.
+Still pending: native tmux control-mode. Saved SSH sessions use an embedded
+libssh2 transport: the terminal shell and SFTP browser share one authenticated
+connection. Passwords, key passphrases, and keyboard-interactive answers are
+requested inside the terminal and held only in memory for that session. The
+remote browser starts at `/`; after `sudo su`, it uses the same SSH connection
+and sudo authorization for root directory metadata when available.
 (Mouse reporting needs a ConPTY that passes mouse-mode
 requests through — Windows 11 / recent Windows 10.)
 

@@ -44,7 +44,7 @@ Status meanings:
 | Responsive density | Golden captures at minimum width, 100–300% DPI, long names, 1/4/16/48 panes and tab overflow | Width/DPI layout and committed golden comparison gate |
 | Object semantics | Repository, ordinary folder, worktree, SSH host and Agent task have distinct icon/state/secondary text | Gate for distinct icons, compact dirty/ahead/behind status, favorites and Agent activity labels |
 | Side panels | Terminal retains a usable minimum grid; panels collapse predictably and preserve user intent | Pure layout and 640/800/1000px display gate; effective state is exposed to UIA |
-| File tree scope | UI and copy describe navigation/context, not IDE editing | Breadcrumb navigation and insert-only file action implemented; remote SFTP remains planned |
+| File tree scope | UI and copy describe navigation/context, not IDE editing | Local navigation plus embedded-session SFTP; insert-only file action |
 | Visual regression | Pixel/tolerance comparison of deterministic headless Direct2D captures | Gate: isolated profile, WARP captures, committed baselines and 1% tolerance |
 
 ## Reliability schedules

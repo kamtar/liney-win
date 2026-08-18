@@ -2,13 +2,17 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
 namespace liney {
 
-std::wstring runCapture(const std::wstring& commandLine, const std::wstring& cwd,
-                        bool* ok, unsigned long timeoutMs) {
+namespace {
+
+std::wstring capture(const std::wstring& commandLine, const std::wstring& cwd,
+                     const std::string* input, bool* ok,
+                     unsigned long timeoutMs) {
     if (ok) *ok = false;
 
     SECURITY_ATTRIBUTES sa{};
@@ -16,16 +20,25 @@ std::wstring runCapture(const std::wstring& commandLine, const std::wstring& cwd
     sa.bInheritHandle = TRUE;
 
     HANDLE readPipe = nullptr, writePipe = nullptr;
+    HANDLE inputRead = nullptr, inputWrite = nullptr;
     if (!CreatePipe(&readPipe, &writePipe, &sa, 0)) return L"";
     // The child inherits only the write end; keep our read end private.
     SetHandleInformation(readPipe, HANDLE_FLAG_INHERIT, 0);
+    if (input) {
+        if (!CreatePipe(&inputRead, &inputWrite, &sa, 0)) {
+            CloseHandle(readPipe);
+            CloseHandle(writePipe);
+            return L"";
+        }
+        SetHandleInformation(inputWrite, HANDLE_FLAG_INHERIT, 0);
+    }
 
     STARTUPINFOW si{};
     si.cb = sizeof(si);
     si.dwFlags = STARTF_USESTDHANDLES;
     si.hStdOutput = writePipe;
     si.hStdError = writePipe;
-    si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+    si.hStdInput = input ? inputRead : GetStdHandle(STD_INPUT_HANDLE);
 
     PROCESS_INFORMATION pi{};
     std::wstring cmd = commandLine;  // CreateProcessW may mutate the buffer.
@@ -35,8 +48,30 @@ std::wstring runCapture(const std::wstring& commandLine, const std::wstring& cwd
         workDir, &si, &pi);
 
     CloseHandle(writePipe);  // we only read; child owns its copy
+    if (input) {
+        CloseHandle(inputRead);  // the child owns its inherited read end
+        if (!input->empty()) {
+            const char* data = input->data();
+            size_t remaining = input->size();
+            while (remaining > 0) {
+                DWORD written = 0;
+                const DWORD chunk = static_cast<DWORD>(
+                    std::min<size_t>(remaining, 64 * 1024));
+                if (!WriteFile(inputWrite, data, chunk, &written, nullptr) ||
+                    written == 0)
+                    break;
+                data += written;
+                remaining -= written;
+            }
+        }
+        CloseHandle(inputWrite);  // EOF tells sftp that its batch is complete
+    }
     if (!launched) {
         CloseHandle(readPipe);
+        if (input) {
+            // The handles were not inherited after a failed launch.
+            // inputRead was already closed above; inputWrite is closed too.
+        }
         return L"";
     }
 
@@ -90,6 +125,20 @@ std::wstring runCapture(const std::wstring& commandLine, const std::wstring& cwd
     MultiByteToWideChar(CP_UTF8, 0, out.data(), static_cast<int>(out.size()),
                         wide.data(), wlen);
     return wide;
+}
+
+}  // namespace
+
+std::wstring runCapture(const std::wstring& commandLine, const std::wstring& cwd,
+                        bool* ok, unsigned long timeoutMs) {
+    return capture(commandLine, cwd, nullptr, ok, timeoutMs);
+}
+
+std::wstring runCaptureWithInput(const std::wstring& commandLine,
+                                 const std::wstring& cwd,
+                                 const std::string& input, bool* ok,
+                                 unsigned long timeoutMs) {
+    return capture(commandLine, cwd, &input, ok, timeoutMs);
 }
 
 void runDetached(const std::wstring& commandLine, const std::wstring& cwd) {

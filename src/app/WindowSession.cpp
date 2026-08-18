@@ -2,6 +2,7 @@
 #include "app/WindowInternal.h"
 #include "app/BuiltinIcons.h"
 #include "util/Dialogs.h"
+#include "util/ConnectionDialog.h"
 #include "util/InputBox.h"
 #include "util/Http.h"
 #include "util/Json.h"
@@ -15,6 +16,8 @@
 
 #include <fstream>
 #include <algorithm>
+#include <cstdint>
+#include <cwctype>
 #include <cstdio>
 #include <sstream>
 #include <string>
@@ -42,7 +45,9 @@ Json paneToJson(const Pane* p) {
             const SessionContext& context = p->session->context();
             Json c = Json::object();
             const char* role = context.role == SessionRole::Agent ? "agent" :
-                               context.role == SessionRole::Ssh ? "ssh" : "shell";
+                               context.role == SessionRole::Ssh ? "ssh" :
+                               context.role == SessionRole::Serial ? "serial" :
+                                                                     "shell";
             c.set("role", Json::str(role));
             c.set("workspaceScoped", Json::boolean(context.workspaceScoped));
             c.set("projectPath", Json::str(wideToUtf8(context.projectPath)));
@@ -50,7 +55,36 @@ Json paneToJson(const Pane* p) {
             c.set("taskName", Json::str(wideToUtf8(context.taskName)));
             c.set("agentName", Json::str(wideToUtf8(context.agentName)));
             c.set("testCommand", Json::str(wideToUtf8(context.testCommand)));
+            if (context.sshProfile) {
+                Json ssh = Json::object();
+                ssh.set("name", Json::str(wideToUtf8(context.sshProfile->name)));
+                ssh.set("host", Json::str(wideToUtf8(context.sshProfile->host)));
+                ssh.set("port", Json::number(context.sshProfile->port));
+                ssh.set("identityFile",
+                        Json::str(wideToUtf8(context.sshProfile->identityFile)));
+                ssh.set("user", Json::str(wideToUtf8(context.sshProfile->user)));
+                c.set("sshProfile", std::move(ssh));
+            }
             j.set("context", std::move(c));
+            if (p->session->isSerial()) {
+                const SerialProfile* profile = p->session->serialProfile();
+                if (profile) {
+                    Json serial = Json::object();
+                    serial.set("name", Json::str(wideToUtf8(profile->name)));
+                    serial.set("port", Json::str(wideToUtf8(profile->port)));
+                    serial.set("baudRate", Json::number(profile->baudRate));
+                    serial.set("dataBits", Json::number(profile->dataBits));
+                    serial.set("parity", Json::number(
+                        static_cast<int>(profile->parity)));
+                    serial.set("stopBits", Json::number(
+                        static_cast<int>(profile->stopBits)));
+                    serial.set("mode", Json::number(
+                        static_cast<int>(profile->mode)));
+                    serial.set("lineEnding", Json::number(
+                        static_cast<int>(profile->lineEnding)));
+                    j.set("serialProfile", std::move(serial));
+                }
+            }
         }
     }
     return j;
@@ -504,7 +538,8 @@ std::unique_ptr<Pane> Window::paneFromJson(const Json& j, int cols, int rows) {
     if (c.isObject()) {
         const std::string role = c["role"].asString();
         context.role = role == "agent" ? SessionRole::Agent :
-                       role == "ssh" ? SessionRole::Ssh : SessionRole::Shell;
+                       role == "ssh" ? SessionRole::Ssh :
+                       role == "serial" ? SessionRole::Serial : SessionRole::Shell;
         if (c.contains("workspaceScoped")) {
             context.workspaceScoped = c["workspaceScoped"].asBool();
             hasPersistedWorkspaceScope = true;
@@ -514,19 +549,73 @@ std::unique_ptr<Pane> Window::paneFromJson(const Json& j, int cols, int rows) {
         context.taskName = utf8ToWide(c["taskName"].asString());
         context.agentName = utf8ToWide(c["agentName"].asString());
         context.testCommand = utf8ToWide(c["testCommand"].asString());
+        const Json& ssh = c["sshProfile"];
+        if (ssh.isObject()) {
+            SshProfile profile;
+            profile.name = utf8ToWide(ssh["name"].asString());
+            profile.host = utf8ToWide(ssh["host"].asString());
+            profile.port = static_cast<int>(ssh["port"].asNumber(22));
+            profile.identityFile = utf8ToWide(ssh["identityFile"].asString());
+            profile.user = utf8ToWide(ssh["user"].asString());
+            if (validSshProfile(profile)) context.sshProfile = std::move(profile);
+        }
     }
     // Older layout files did not persist session context. Recover a project
     // identity from the saved cwd when possible so enabling this setting also
     // works for those restored layouts.
-    if (!hasPersistedWorkspaceScope && context.projectPath.empty() &&
+    if (context.role != SessionRole::Serial &&
+        !hasPersistedWorkspaceScope && context.projectPath.empty() &&
         context.worktreePath.empty())
         context = contextForWorkspacePath(cwd);
     const std::wstring historyPath = powerShellHistoryPerProject_
         ? powerShellHistoryPath(context.projectPath, context.worktreePath)
         : L"";
-    const std::wstring preparedShell = prepareShellCommand(shell, historyPath);
     auto s = std::make_unique<TerminalSession>();
-    if (!s->start(preparedShell, cwd, cols, rows, scrollback_)) return nullptr;
+    if (context.role == SessionRole::Serial) {
+        SerialProfile profile;
+        const Json& serial = j["serialProfile"];
+        if (serial.isObject()) {
+            profile.name = utf8ToWide(serial["name"].asString());
+            profile.port = utf8ToWide(serial["port"].asString());
+            profile.baudRate = static_cast<uint32_t>(
+                serial["baudRate"].asNumber(profile.baudRate));
+            profile.dataBits = static_cast<uint8_t>(
+                serial["dataBits"].asNumber(profile.dataBits));
+            profile.parity = static_cast<SerialParity>(
+                static_cast<int>(serial["parity"].asNumber(0)));
+            profile.stopBits = static_cast<SerialStopBits>(
+                static_cast<int>(serial["stopBits"].asNumber(0)));
+            profile.mode = static_cast<SerialMode>(
+                static_cast<int>(serial["mode"].asNumber(0)));
+            profile.lineEnding = static_cast<SerialLineEnding>(
+                static_cast<int>(serial["lineEnding"].asNumber(0)));
+        } else {
+            for (const SerialProfile& candidate : serialPorts_)
+                if (candidate.name == context.taskName ||
+                    serialProfileDisplayName(candidate) == context.taskName) {
+                    profile = candidate;
+                    break;
+                }
+        }
+        const bool enumsValid = static_cast<int>(profile.parity) >= 0 &&
+            static_cast<int>(profile.parity) <= 4 &&
+            static_cast<int>(profile.stopBits) >= 0 &&
+            static_cast<int>(profile.stopBits) <= 2 &&
+            static_cast<int>(profile.mode) >= 0 &&
+            static_cast<int>(profile.mode) <= 2 &&
+            static_cast<int>(profile.lineEnding) >= 0 &&
+            static_cast<int>(profile.lineEnding) <= 3;
+        if (!enumsValid || !validSerialProfile(profile) ||
+            !s->startSerial(profile, cols, rows, scrollback_))
+            return nullptr;
+    } else if (context.role == SessionRole::Ssh) {
+        if (!context.sshProfile ||
+            !startSshSession(s.get(), *context.sshProfile, cols, rows))
+            return nullptr;
+    } else {
+        const std::wstring preparedShell = prepareShellCommand(shell, historyPath);
+        if (!s->start(preparedShell, cwd, cols, rows, scrollback_)) return nullptr;
+    }
     s->setShellCommandForPersistence(shell);
     s->setContext(std::move(context));
     s->setTheme(theme_);
@@ -814,6 +903,136 @@ void Window::removeProject(const Repo& repo) {
     workspace_.removeRepoByPath(path);
     persistWorkspaceConfig();
     showToast(L"Project removed from workspace");
+}
+
+void Window::addWorkspaceSsh() {
+    ConnectionDialogValues values;
+    values.ssh.port = 22;
+    if (!showConnectionDialog(hwnd_, ConnectionDialogKind::Ssh, values,
+                              uiTheme_))
+        return;
+    SshProfile profile = std::move(values.ssh);
+    if (!saveSshProfile(profile)) {
+        MessageBoxW(hwnd_,
+                    L"Liney could not save the SSH connection.\n\n"
+                    L"The existing configuration was left unchanged.",
+                    L"Liney - SSH connection", MB_OK | MB_ICONERROR);
+        return;
+    }
+
+    sshHosts_.push_back(profile);
+    sshExpanded_ = true;
+    markRenderDirty();
+    showToast(L"SSH connection added");
+
+    SessionContext context;
+    context.role = SessionRole::Ssh;
+    context.taskName = profile.name;
+    context.sshProfile = profile;
+    newTabShell(buildSshCommand(profile), homeDir(), context);
+}
+
+void Window::addWorkspaceSerial() {
+    ConnectionDialogValues values;
+    values.serial.baudRate = 9600;
+    if (!showConnectionDialog(hwnd_, ConnectionDialogKind::Serial, values,
+                              uiTheme_))
+        return;
+    SerialProfile profile = std::move(values.serial);
+    if (!saveSerialProfile(profile)) {
+        MessageBoxW(hwnd_,
+                    L"Liney could not save the serial connection.\n\n"
+                    L"The existing configuration was left unchanged.",
+                    L"Liney - serial connection", MB_OK | MB_ICONERROR);
+        return;
+    }
+
+    serialPorts_.push_back(profile);
+    serialExpanded_ = true;
+    markRenderDirty();
+    showToast(profile.mode == SerialMode::RawHexMonitor
+                  ? L"Raw hex serial monitor added"
+                  : profile.mode == SerialMode::RawText
+                      ? L"Raw text serial connection added"
+                      : L"Serial connection added");
+    newTabSerial(profile);
+}
+
+void Window::editWorkspaceSsh(int index) {
+    if (index < 0 || index >= static_cast<int>(sshHosts_.size())) return;
+    ConnectionDialogValues values;
+    values.ssh = sshHosts_[index];
+    if (!showConnectionDialog(hwnd_, ConnectionDialogKind::Ssh, values,
+                              uiTheme_))
+        return;
+    std::vector<SshProfile> updated = sshHosts_;
+    updated[static_cast<size_t>(index)] = std::move(values.ssh);
+    if (!saveSshProfiles(updated)) {
+        showToast(L"SSH connection could not be saved", true);
+        return;
+    }
+    sshHosts_ = std::move(updated);
+    markRenderDirty();
+    showToast(L"SSH connection updated");
+}
+
+void Window::removeWorkspaceSsh(int index) {
+    if (index < 0 || index >= static_cast<int>(sshHosts_.size())) return;
+    const SshProfile& profile = sshHosts_[static_cast<size_t>(index)];
+    const std::wstring label = profile.name.empty() ? profile.host : profile.name;
+    if (MessageBoxW(hwnd_,
+                    (L"Remove the SSH connection \"" + label + L"\"?\n\n"
+                     L"Existing open tabs will not be closed.").c_str(),
+                    L"Remove SSH connection", MB_YESNO | MB_ICONQUESTION) != IDYES)
+        return;
+    std::vector<SshProfile> updated = sshHosts_;
+    updated.erase(updated.begin() + index);
+    if (!saveSshProfiles(updated)) {
+        showToast(L"SSH connection could not be removed", true);
+        return;
+    }
+    sshHosts_ = std::move(updated);
+    markRenderDirty();
+    showToast(L"SSH connection removed");
+}
+
+void Window::editWorkspaceSerial(int index) {
+    if (index < 0 || index >= static_cast<int>(serialPorts_.size())) return;
+    ConnectionDialogValues values;
+    values.serial = serialPorts_[static_cast<size_t>(index)];
+    if (!showConnectionDialog(hwnd_, ConnectionDialogKind::Serial, values,
+                              uiTheme_))
+        return;
+    std::vector<SerialProfile> updated = serialPorts_;
+    updated[static_cast<size_t>(index)] = std::move(values.serial);
+    if (!saveSerialProfiles(updated)) {
+        showToast(L"Serial connection could not be saved", true);
+        return;
+    }
+    serialPorts_ = std::move(updated);
+    markRenderDirty();
+    showToast(L"Serial connection updated");
+}
+
+void Window::removeWorkspaceSerial(int index) {
+    if (index < 0 || index >= static_cast<int>(serialPorts_.size())) return;
+    const SerialProfile& profile = serialPorts_[static_cast<size_t>(index)];
+    if (MessageBoxW(hwnd_,
+                    (L"Remove the serial connection \"" +
+                     serialProfileDisplayName(profile) + L"\"?\n\n"
+                     L"Existing open tabs will not be closed.").c_str(),
+                    L"Remove serial connection",
+                    MB_YESNO | MB_ICONQUESTION) != IDYES)
+        return;
+    std::vector<SerialProfile> updated = serialPorts_;
+    updated.erase(updated.begin() + index);
+    if (!saveSerialProfiles(updated)) {
+        showToast(L"Serial connection could not be removed", true);
+        return;
+    }
+    serialPorts_ = std::move(updated);
+    markRenderDirty();
+    showToast(L"Serial connection removed");
 }
 
 void Window::toggleProjectArchive(const Repo& repo) {

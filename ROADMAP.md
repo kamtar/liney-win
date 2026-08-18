@@ -27,10 +27,10 @@
 | **标签 / 分屏** | ✅ | ✅ 多标签、二叉分屏、方向聚焦、关闭收拢 |
 | ├ 拖拽分隔条调比例 | ✅ | ✅ |
 | ├ 标签拖拽重排 | ✅ | ✅ |
-| **文件浏览** | 跟随聚焦 pane 的文件树(本地 + SSH) | 🟡 本地跟随、面包屑导航与文件插入;SFTP 待做 |
+| **文件浏览** | 跟随聚焦 pane 的文件树(本地 + SSH) | ✅ 本地 + SFTP 远程目录、面包屑导航与文件插入 |
 | **会话类型** | 本地 shell / SSH / agent / tmux | 🟡 本地、SSH、agent;tmux 可作为命令启动 |
 | ├ 可选 shell(pwsh/wsl) | ✅ | ✅ 自动发现并可配置 |
-| ├ SSH + 远程文件树 | ✅ | 🟡 SSH 会话已具备;远程文件树待做 |
+| ├ SSH + 远程文件树 | ✅ | ✅ 嵌入式 libssh2 共享认证连接浏览 SFTP |
 | ├ agent 会话 | ✅ | ✅ |
 | ├ tmux 集成 | ✅ | 🟡 可运行;原生 control mode 待做 |
 | **Git 集成** | worktree、分支、diff、history | ✅ worktree、状态、diff、history |
@@ -116,10 +116,10 @@ SSH / agent / tmux / 打包更新 体量大、相对独立,排在后面;diff/his
 - ✅ **Git history / diff 视图**:`Ctrl+Shift+L` 在新标签开 `git log`(图形化历史,走 pager + alt 屏)、`Ctrl+Shift+G` 开 `git diff`
 
 ### P5 — 远程与高级会话(体量大,独立推进)🟡 进行中
-- ✅ **SSH 会话**:config `sshHosts` → 侧边栏 SSH 区,点击在新标签起 `ssh <host>`(ConPTY,Windows 自带 OpenSSH);会话 shell 命令随布局持久化(SSH 标签可恢复)。确定性验证:点击后 liney 子进程出现 `ssh test@192.0.2.1`
+- ✅ **SSH 会话**:config `sshHosts` → 侧边栏 SSH 区,点击在新标签启动嵌入式 libssh2 shell;终端与 SFTP 共享同一个认证连接,SSH 标签可恢复(凭据不写入布局)
 - ✅ **agent 会话**:config `agents: [{name, command, cwd}]` → 侧边栏 AGENTS 区,点击在新标签起该命令(对标 liney 的 agent 会话)。确定性验证:点击后 liney 子进程出现配置的命令
 - 🟡 **tmux 集成**:可通过把 `shell` 设为 `wsl tmux` 或在 `agents` 加一条命令实现(ConPTY 起任意程序);原生 tmux control-mode 集成留待后续
-- ⬜ 远程文件树(SFTP)
+- ✅ 远程文件树(SFTP):嵌入式 libssh2 与终端共享同一个认证连接;凭据仅在内存中保留
 - 🟡 **glyph atlas + D3D11** 渲染升级:atlas 已落地(D2D `FillOpacityMask`,见 P1.6);
   D3D11 自定义 shader 管线与连字仍待做
 

@@ -248,6 +248,13 @@ bool Window::create(HINSTANCE hInstance, const wchar_t* title, int width,
     copyOnSelect_ = cfg.copyOnSelect;
     multiLinePasteWarning_ = cfg.multiLinePasteWarning;
     rememberLayout_ = cfg.rememberLayout;
+    rememberPanelLayout_ = cfg.rememberPanelLayout;
+    if (rememberPanelLayout_) {
+        sidebarWidth_ = std::clamp(cfg.sidebarWidth, 144.0f, 640.0f);
+        filesPanelWidth_ = std::clamp(cfg.filesPanelWidth, 144.0f, 640.0f);
+        sidebarVisible_ = cfg.sidebarVisible;
+        filesPanelVisible_ = cfg.filesPanelVisible;
+    }
     splitUseWorkspaceDir_ = cfg.splitUseWorkspaceDir;
     powerShellHistoryPerProject_ = cfg.powerShellHistoryPerProject;
 #ifdef LINEY_STORE_BUILD
@@ -278,6 +285,7 @@ bool Window::create(HINSTANCE hInstance, const wchar_t* title, int width,
                  L"$e]133;A$e\\" + base + L"$e]133;B$e\\").c_str());
     }
     sshHosts_ = cfg.sshHosts;
+    serialPorts_ = cfg.serialPorts;
     agents_ = cfg.agents;
     projectIcons_ = cfg.projectIcons;
     projectColors_ = cfg.projectColors;
@@ -598,8 +606,7 @@ LRESULT Window::wndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
     case kAccessibilityInvokeMessage:
         switch (static_cast<AccessibleElementId>(wParam)) {
         case AccessibleElementId::SidebarToggle:
-            sidebarVisible_ = !sidebarVisible_;
-            markRenderDirty();
+            setSidebarVisible(!sidebarVisible_);
             break;
         case AccessibleElementId::NewTab:
             newTab(activeSession() ? activeSession()->cwd() : homeDir());
@@ -660,6 +667,7 @@ LRESULT Window::wndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
         for (size_t i = 0; i < tabs_.size(); ++i) all[i] = i;
         if (!confirmCloseRunning(runningTabTitles(all), L"Quit liney?"))
             return 0;  // user cancelled
+        savePanelLayout();
         DestroyWindow(hwnd_);
         return 0;
     }
@@ -905,8 +913,10 @@ void Window::regions(Rect& leftBar, Rect& rightPanel, Rect& tabBar,
     const float W = static_cast<float>(rc.right - rc.left);
     const float H = static_cast<float>(rc.bottom - rc.top);
     const ResponsivePanelLayout responsive = layoutResponsivePanels(
-        W, sidebarVisible_, filesPanelVisible_, metrics_.sidebarW(),
-        metrics_.compactSidebarW(), metrics_.minimumTerminalW());
+        W, sidebarVisible_, filesPanelVisible_,
+        sidebarWidth_ * metrics_.uiScale, filesPanelWidth_ * metrics_.uiScale,
+        metrics_.compactSidebarW(), metrics_.compactSidebarW(),
+        metrics_.minimumTerminalW());
     const float sw = responsive.leftWidth;
     const float fw = responsive.rightWidth;
     sidebarEffectiveVisible_ = sidebarVisible_ && sw > 0.0f;
@@ -920,6 +930,38 @@ void Window::regions(Rect& leftBar, Rect& rightPanel, Rect& tabBar,
     rightPanel = { W - fw, 0, fw, H };
     tabBar = { sw, 0, midW, tb };
     panes = { sw, tb, midW, H - tb };
+    const float resizeHitW = std::max(8.0f, 10.0f * metrics_.uiScale);
+    sidebarResizeRect_ = sidebarEffectiveVisible_
+        ? Rect{std::max(0.0f, sw - resizeHitW * 0.5f), 0.0f,
+               resizeHitW, H}
+        : Rect{};
+    filesResizeRect_ = filesPanelEffectiveVisible_
+        ? Rect{std::max(0.0f, W - fw - resizeHitW * 0.5f), 0.0f,
+               resizeHitW, H}
+        : Rect{};
+}
+
+void Window::savePanelLayout() const {
+    if (!rememberPanelLayout_) return;
+    updateConfigJson([&](Json& j) {
+        j.set("rememberPanelLayout", Json::boolean(rememberPanelLayout_));
+        j.set("sidebarVisible", Json::boolean(sidebarVisible_));
+        j.set("filesPanelVisible", Json::boolean(filesPanelVisible_));
+        j.set("sidebarWidth", Json::number(sidebarWidth_));
+        j.set("filesPanelWidth", Json::number(filesPanelWidth_));
+    });
+}
+
+void Window::setSidebarVisible(bool visible) {
+    sidebarVisible_ = visible;
+    savePanelLayout();
+    markRenderDirty();
+}
+
+void Window::setFilesPanelVisible(bool visible) {
+    filesPanelVisible_ = visible;
+    savePanelLayout();
+    markRenderDirty();
 }
 
 void Window::renderFrame() {
@@ -963,6 +1005,21 @@ void Window::renderFrame() {
     drawTabBar(tabBar);
     renderer_->popClip();
     drawPanes(panes);
+    // The panel boundary doubles as the resize grip. Keep the normal border
+    // subtle, but make the handle visibly interactive on hover/drag.
+    const auto drawPanelHandle = [&](const Rect& handle, float boundary) {
+        if (handle.w <= 0.0f || handle.h <= 0.0f) return;
+        const bool hot = handle.contains(static_cast<float>(lastMouseX_),
+                                         static_cast<float>(lastMouseY_));
+        const Color color = hot ? uiTheme_.accent : uiTheme_.border;
+        const float lineW = hot ? std::max(2.0f, dpiScale_) : 1.0f;
+        renderer_->fillRect(boundary - lineW * 0.5f, handle.y, lineW,
+                            handle.h, color);
+    };
+    if (sidebarEffectiveVisible_)
+        drawPanelHandle(sidebarResizeRect_, leftBar.right() - 0.5f);
+    if (filesPanelEffectiveVisible_)
+        drawPanelHandle(filesResizeRect_, rightPanel.x + 0.5f);
     if (welcomeVisible_) drawWelcome(panes);
     drawCommandPalette();
     drawToast();
@@ -1151,6 +1208,15 @@ void Window::updateChromeAccessibility() {
                    row.repo < static_cast<int>(sshHosts_.size())) {
             info.name = sshHosts_[row.repo].name;
             info.helpText = L"SSH host. Invoke to open a session.";
+        } else if (row.kind == RowKind::SshHeader) {
+            info.name = L"SSH";
+            info.helpText = L"SSH connections. Invoke to expand or collapse.";
+            info.expandable = true;
+            info.expanded = sshExpanded_;
+        } else if (row.kind == RowKind::SerialPort && row.repo >= 0 &&
+                   row.repo < static_cast<int>(serialPorts_.size())) {
+            info.name = serialProfileDisplayName(serialPorts_[row.repo]);
+            info.helpText = L"Serial port. Invoke to open a session.";
         } else if (row.kind == RowKind::Agent && row.repo >= 0 &&
                    row.repo < static_cast<int>(agents_.size())) {
             info.name = agents_[row.repo].name;
@@ -1163,6 +1229,11 @@ void Window::updateChromeAccessibility() {
             info.helpText = L"Archived projects. Invoke to expand or collapse.";
             info.expandable = true;
             info.expanded = archiveExpanded_;
+        } else if (row.kind == RowKind::SerialHeader) {
+            info.name = L"Serial";
+            info.helpText = L"Serial connections. Invoke to expand or collapse.";
+            info.expandable = true;
+            info.expanded = serialExpanded_;
         }
         if (!info.name.empty()) elements.push_back(std::move(info));
     }
@@ -1270,6 +1341,33 @@ void Window::newTab(const std::wstring& cwd, const SessionContext& context) {
     newTabShell(shell_, cwd, context, false);
 }
 
+TerminalSession* Window::newTabSerial(const SerialProfile& profile) {
+    clearSelection();
+    Rect leftBar, rightPanel, tabBar, panes;
+    regions(leftBar, rightPanel, tabBar, panes);
+    int cols = 80, rows = 24;
+    cellsForRect(panes, cols, rows);
+
+    auto session = std::make_unique<TerminalSession>();
+    if (!session->startSerial(profile, cols, rows, scrollback_)) {
+        const std::wstring detail = session->serialErrorMessage();
+        showToast(detail.empty() ? L"Could not open the serial port"
+                                 : L"Could not open serial port: " + detail,
+                  true);
+        return nullptr;
+    }
+    SessionContext context;
+    context.role = SessionRole::Serial;
+    context.taskName = serialProfileDisplayName(profile);
+    session->setContext(context);
+    session->setTheme(theme_);
+    TerminalSession* created = session.get();
+    tabs_.push_back(std::make_unique<Tab>(std::move(session)));
+    activeTab_ = tabs_.size() - 1;
+    updateTitle();
+    return created;
+}
+
 TerminalSession* Window::openWorkspaceSession(
     const std::wstring& path, const std::wstring& projectPath,
     const std::wstring& worktreePath, bool forceNew) {
@@ -1313,7 +1411,8 @@ TerminalSession* Window::newTabShell(const std::wstring& shellCmd,
     cellsForRect(panes, cols, rows);
 
     SessionContext actualContext = context;
-    if (inferWorkspaceContext && actualContext.projectPath.empty() &&
+    if (inferWorkspaceContext && actualContext.role != SessionRole::Ssh &&
+        actualContext.projectPath.empty() &&
         actualContext.worktreePath.empty())
         actualContext = contextForWorkspacePath(cwd);
     actualContext.workspaceScoped =
@@ -1324,9 +1423,17 @@ TerminalSession* Window::newTabShell(const std::wstring& shellCmd,
         ? powerShellHistoryPath(actualContext.projectPath,
                                 actualContext.worktreePath)
         : L"";
-    const std::wstring preparedShell =
-        prepareShellCommand(shellCmd, historyPath);
-    if (!session->start(preparedShell, cwd, cols, rows, scrollback_)) return nullptr;
+    bool started = false;
+    if (actualContext.role == SessionRole::Ssh) {
+        if (!actualContext.sshProfile) return nullptr;
+        started = startSshSession(session.get(), *actualContext.sshProfile,
+                                  cols, rows);
+    } else {
+        const std::wstring preparedShell =
+            prepareShellCommand(shellCmd, historyPath);
+        started = session->start(preparedShell, cwd, cols, rows, scrollback_);
+    }
+    if (!started) return nullptr;
     session->setShellCommandForPersistence(shellCmd);
     session->setContext(actualContext);
     session->setTheme(theme_);
@@ -1336,6 +1443,16 @@ TerminalSession* Window::newTabShell(const std::wstring& shellCmd,
     activeTab_ = tabs_.size() - 1;
     updateTitle();
     return created;
+}
+
+bool Window::startSshSession(TerminalSession* session,
+                             const SshProfile& profile,
+                             int cols, int rows) {
+    if (!session) return false;
+    // Authentication is intentionally brokered through the terminal. This
+    // keeps passwords and key passphrases out of a second modal UI and lets
+    // keyboard-interactive SSH servers ask for whatever they require.
+    return session->startSsh(profile, cols, rows, scrollback_, {});
 }
 
 void Window::runStartHook(TerminalSession* s) {
@@ -1641,6 +1758,7 @@ void Window::openSettingsDialog() {
     v.multiLinePasteWarning = multiLinePasteWarning_;
     v.unixTools = unixToolsEnabled_;
     v.rememberLayout = rememberLayout_;
+    v.rememberPanelLayout = rememberPanelLayout_;
     v.splitUseWorkspaceDir = splitUseWorkspaceDir_;
     v.powerShellHistoryPerProject = powerShellHistoryPerProject_;
     v.checkForUpdatesOnStartup = checkForUpdatesOnStartup_;
@@ -1664,6 +1782,7 @@ void Window::openSettingsDialog() {
     copyOnSelect_ = v.copyOnSelect;
     multiLinePasteWarning_ = v.multiLinePasteWarning;
     rememberLayout_ = v.rememberLayout;
+    rememberPanelLayout_ = v.rememberPanelLayout;
     splitUseWorkspaceDir_ = v.splitUseWorkspaceDir;
     powerShellHistoryPerProject_ = v.powerShellHistoryPerProject;
 #ifdef LINEY_STORE_BUILD
@@ -1723,6 +1842,11 @@ void Window::openSettingsDialog() {
         j.set("multiLinePasteWarning", Json::boolean(multiLinePasteWarning_));
         j.set("unixTools", Json::boolean(unixToolsEnabled_));
         j.set("rememberLayout", Json::boolean(rememberLayout_));
+        j.set("rememberPanelLayout", Json::boolean(rememberPanelLayout_));
+        j.set("sidebarVisible", Json::boolean(sidebarVisible_));
+        j.set("filesPanelVisible", Json::boolean(filesPanelVisible_));
+        j.set("sidebarWidth", Json::number(sidebarWidth_));
+        j.set("filesPanelWidth", Json::number(filesPanelWidth_));
         j.set("splitUseWorkspaceDir", Json::boolean(splitUseWorkspaceDir_));
         j.set("powerShellHistoryPerProject",
               Json::boolean(powerShellHistoryPerProject_));
@@ -1933,8 +2057,16 @@ void Window::restartSession(TerminalSession* session) {
     const std::wstring historyPath = powerShellHistoryPerProject_
         ? powerShellHistoryPath(context.projectPath, context.worktreePath)
         : L"";
-    if (!replacement->start(prepareShellCommand(shell, historyPath), cwd, cols,
-                            rows, scrollback_)) {
+    bool started = false;
+    if (context.role == SessionRole::Ssh) {
+        started = context.sshProfile &&
+                  startSshSession(replacement.get(), *context.sshProfile,
+                                     cols, rows);
+    } else {
+        started = replacement->start(prepareShellCommand(shell, historyPath),
+                                     cwd, cols, rows, scrollback_);
+    }
+    if (!started) {
         MessageBoxW(hwnd_, L"The shell could not be restarted.", L"Liney",
                     MB_OK | MB_ICONERROR);
         return;
@@ -2112,8 +2244,8 @@ void Window::openMainMenu() {
         return;
     }
     switch (cmd) {
-    case 2: sidebarVisible_ = !sidebarVisible_; break;
-    case 3: filesPanelVisible_ = !filesPanelVisible_; break;
+    case 2: setSidebarVisible(!sidebarVisible_); break;
+    case 3: setFilesPanelVisible(!filesPanelVisible_); break;
     case 4: newTab(activeSession() ? activeSession()->cwd() : homeDir()); break;
     case 5: splitActive(SplitDir::Cols); break;
     case 6: splitActive(SplitDir::Rows); break;

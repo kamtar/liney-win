@@ -1,6 +1,7 @@
 #include "util/InputBox.h"
 
 #include <algorithm>
+#include <utility>
 
 namespace liney {
 
@@ -9,6 +10,11 @@ namespace {
 constexpr int kIdEdit = 100;
 constexpr int kIdOk = IDOK;       // 1
 constexpr int kIdCancel = IDCANCEL;  // 2
+
+struct ModalInputResult {
+    bool accepted = false;
+    std::wstring value;
+};
 
 struct State {
     HWND edit = nullptr;
@@ -65,9 +71,10 @@ LRESULT CALLBACK proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
 } // namespace
 
-std::wstring inputBox(HWND owner, const std::wstring& title,
-                      const std::wstring& label, const std::wstring& initial) {
-    static const wchar_t* kClass = L"LineyInputBox";
+static ModalInputResult runInputBox(HWND owner, const std::wstring& title,
+                                    const std::wstring& label,
+                                    const std::wstring& initial) {
+    const wchar_t* kClass = L"LineyInputBox";
     HINSTANCE inst = GetModuleHandleW(nullptr);
 
     static bool registered = false;
@@ -93,7 +100,7 @@ std::wstring inputBox(HWND owner, const std::wstring& title,
         WS_EX_DLGMODALFRAME, kClass, title.c_str(),
         WS_POPUP | WS_CAPTION | WS_SYSMENU, x, y, w, h, owner, nullptr, inst,
         nullptr);
-    if (!dlg) return L"";
+    if (!dlg) return {};
 
     State st;
     SetWindowLongPtrW(dlg, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&st));
@@ -102,7 +109,9 @@ std::wstring inputBox(HWND owner, const std::wstring& title,
                     w - 30, 18, dlg, nullptr, inst, nullptr);
     st.edit = CreateWindowExW(
         WS_EX_CLIENTEDGE, L"EDIT", initial.c_str(),
-        WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL, 12, 32, w - 36, 24,
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL |
+            0,
+        12, 32, w - 36, 24,
         dlg, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdEdit)), inst, nullptr);
     CreateWindowExW(0, L"BUTTON", L"OK",
                     WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
@@ -144,7 +153,16 @@ std::wstring inputBox(HWND owner, const std::wstring& title,
     if (owner) EnableWindow(owner, TRUE);
     DestroyWindow(dlg);
     if (owner) SetForegroundWindow(owner);
-    return st.accepted ? st.result : L"";
+    ModalInputResult result;
+    result.accepted = st.accepted;
+    if (st.accepted) result.value = std::move(st.result);
+    return result;
+}
+
+std::wstring inputBox(HWND owner, const std::wstring& title,
+                      const std::wstring& label, const std::wstring& initial) {
+    ModalInputResult result = runInputBox(owner, title, label, initial);
+    return result.accepted ? std::move(result.value) : L"";
 }
 
 std::wstring inputBoxWithSuggestions(

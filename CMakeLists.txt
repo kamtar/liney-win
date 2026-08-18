@@ -18,6 +18,19 @@ if(NOT WIN32)
     "liney-win targets Windows only (Win32 + Direct2D/Direct3D 11 + ConPTY).")
 endif()
 
+# libssh2 is used only by Liney's embedded SSH transport. Keep its optional
+# examples/tests out of Liney's build and use the Windows CNG backend so the
+# dependency does not add an OpenSSL runtime to the Windows package. These are
+# cache values because the vendored CMakeLists declares them with option().
+set(BUILD_STATIC_LIBS ON CACHE BOOL "Build libssh2 static libraries" FORCE)
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build libssh2 shared libraries" FORCE)
+set(BUILD_EXAMPLES OFF CACHE BOOL "Build libssh2 examples" FORCE)
+set(BUILD_TESTING OFF CACHE BOOL "Build libssh2 tests" FORCE)
+set(CRYPTO_BACKEND WinCNG CACHE STRING "libssh2 crypto backend" FORCE)
+set(ENABLE_ECDSA_WINCNG ON CACHE BOOL "Enable libssh2 WinCNG ECDSA" FORCE)
+set(ENABLE_ZLIB_COMPRESSION OFF CACHE BOOL "Enable libssh2 zlib compression" FORCE)
+add_subdirectory(third_party/libssh2 EXCLUDE_FROM_ALL)
+
 # libghostty-vt is the terminal core (parsing/buffer/scrollback/reflow/Unicode).
 # It is fetched from Ghostty and built via Zig, so a Zig 0.15.2 toolchain must be
 # on PATH to build liney-win. See README for the build steps.
@@ -52,13 +65,17 @@ add_executable(liney_win WIN32
   src/core/Shutdown.cpp
   src/core/KeyBinding.cpp
   src/core/SshProfiles.cpp
+  src/core/SftpBrowser.cpp
+  src/core/SshConnection.cpp
   src/core/Update.cpp
   src/core/WindowGeometry.cpp
   src/core/Ai.cpp
   src/core/CommandHistory.cpp
   src/core/CommandPalette.cpp
+  src/core/SerialProfiles.cpp
   src/render/D2DRenderer.cpp
   src/pty/ConPty.cpp
+  src/serial/SerialPort.cpp
   src/vt/Terminal.cpp
   src/vt/OscParser.cpp
   src/vt/KeyEncoder.cpp
@@ -66,6 +83,7 @@ add_executable(liney_win WIN32
   src/workspace/GitStatusParser.cpp
   src/util/Process.cpp
   src/util/Json.cpp
+  src/util/ConnectionDialog.cpp
   src/util/InputBox.cpp
   src/util/Dialogs.cpp
   src/util/Base64.cpp
@@ -92,7 +110,8 @@ endif()
 
 target_link_libraries(liney_win PRIVATE
   d2d1 dwrite d3d11 d3dcompiler dxgi imm32 winhttp bcrypt windowscodecs ole32 oleaut32
-  comctl32 comdlg32 shell32 dbghelp wintrust crypt32 uiautomationcore)
+  comctl32 comdlg32 shell32 dbghelp wintrust crypt32 uiautomationcore ws2_32
+  libssh2::libssh2)
 target_link_libraries(liney_win PRIVATE dwmapi uxtheme)
 
 # resource.rc already embeds our compatibility/DPI/long-path manifest. MSVC's

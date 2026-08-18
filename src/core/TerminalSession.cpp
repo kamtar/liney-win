@@ -16,6 +16,17 @@
 namespace liney {
 
 namespace {
+std::string utf8FromWide(const wchar_t* text, size_t len) {
+    if (!text || len == 0) return {};
+    const int bytes = WideCharToMultiByte(
+        CP_UTF8, 0, text, static_cast<int>(len), nullptr, 0, nullptr, nullptr);
+    if (bytes <= 0) return {};
+    std::string result(static_cast<size_t>(bytes), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, text, static_cast<int>(len), result.data(),
+                        bytes, nullptr, nullptr);
+    return result;
+}
+
 bool decodeInlineImage(const SemanticEvent& event, InlineImage& image) {
     const size_t colon = event.value.find(':');
     if (colon == std::string::npos) return false;
@@ -143,6 +154,9 @@ TerminalSession::~TerminalSession() {
 bool TerminalSession::start(const std::wstring& shell, const std::wstring& cwd,
                             int cols, int rows, int scrollback) {
     if (!networkWorkingDirectoryReady(cwd)) return false;
+    ssh_.reset();
+    serialProfile_.reset();
+    serialTextLine_.clear();
     cwd_ = cwd;
     shell_ = shell;
     title_ = basename(cwd);
@@ -165,11 +179,194 @@ bool TerminalSession::start(const std::wstring& shell, const std::wstring& cwd,
     return ok;
 }
 
+bool TerminalSession::startSerial(const SerialProfile& profile, int cols,
+                                  int rows, int scrollback) {
+    if (cols <= 0 || rows <= 0) return false;
+    ssh_.reset();
+    cwd_.clear();
+    // shellCommand() is intentionally not populated for serial sessions: it
+    // is a shell restart command for existing callers. Consumers that persist
+    // or reconnect serial tabs should use serialProfile().
+    shell_.clear();
+    title_ = serialProfileDisplayName(profile);
+    cols_ = cols;
+    rows_ = rows;
+    rawSerialOffset_ = 0;
+    serialTextLine_.clear();
+    serialProfile_ = profile;
+    context_.role = SessionRole::Serial;
+
+    if (!terminal_.create(cols, rows, scrollback)) {
+        serialProfile_.reset();
+        return false;
+    }
+    terminal_.setPtyWriter(
+        [this](const char* data, size_t len) { serial_.write(data, len); });
+    const bool ok = serial_.start(
+        profile,
+        [this](const char* data, size_t len) {
+            if (serialRawMode()) {
+                const std::string dump =
+                    formatSerialHexDump(data, len, rawSerialOffset_);
+                terminal_.write(dump.data(), dump.size());
+            } else if (serialRawTextMode()) {
+                const std::string text = formatSerialText(data, len);
+                terminal_.write(text.data(), text.size());
+            } else {
+                terminal_.write(data, len);
+            }
+            markRenderDirty();
+        },
+        [] { markRenderDirty(); });
+    active_ = ok;
+    if (!ok) serialProfile_.reset();
+    return ok;
+}
+
+bool TerminalSession::startSsh(const SshProfile& profile, int cols, int rows,
+                               int scrollback,
+                               const SshCredentials& credentials) {
+    if (!validSshProfile(profile) || cols <= 0 || rows <= 0) return false;
+    serialProfile_.reset();
+    serialTextLine_.clear();
+    ssh_.reset();
+    cwd_.clear();
+    shell_ = buildSshCommand(profile);  // retained for layout persistence
+    title_ = sshProfileTarget(profile);
+    cols_ = cols;
+    rows_ = rows;
+    context_.role = SessionRole::Ssh;
+    context_.sshProfile = profile;
+
+    if (!terminal_.create(cols, rows, scrollback)) return false;
+    ssh_ = std::make_unique<SshConnection>();
+    terminal_.setPtyWriter(
+        [this](const char* data, size_t len) { ssh_->writeShell(data, len); });
+
+    SshShellOptions options;
+    options.columns = cols;
+    options.rows = rows;
+    SshConnectionCallbacks callbacks;
+    callbacks.onOutput = [this](const char* data, size_t len) {
+        terminal_.write(data, len);
+        markRenderDirty();
+    };
+    callbacks.onAuthPrompt = [this](const std::wstring& prompt, bool) {
+        const std::string utf8 = utf8FromWide(prompt.c_str(), prompt.size());
+        if (!utf8.empty()) terminal_.write(utf8.data(), utf8.size());
+        markRenderDirty();
+    };
+    callbacks.onAuthEcho = [this](const char* data, size_t len) {
+        terminal_.write(data, len);
+        markRenderDirty();
+    };
+    callbacks.onError = [this](const std::wstring& error) {
+        const std::string utf8 = utf8FromWide(error.c_str(), error.size());
+        static constexpr char prefix[] = "\r\n[Liney SSH] ";
+        terminal_.write(prefix, sizeof(prefix) - 1);
+        if (!utf8.empty()) terminal_.write(utf8.data(), utf8.size());
+        static constexpr char suffix[] = "\r\n";
+        terminal_.write(suffix, sizeof(suffix) - 1);
+        markRenderDirty();
+    };
+    callbacks.onExit = [] { markRenderDirty(); };
+
+    std::wstring error;
+    const bool ok = ssh_->start(profile, credentials, options,
+                                std::move(callbacks), &error);
+    if (!ok) {
+        ssh_.reset();
+        return false;
+    }
+    active_ = true;
+    return true;
+}
+
 void TerminalSession::sendBytes(const char* data, size_t len) {
     if (active_) {
-        capturePromptInput(data, len);
-        pty_.write(data, len);
+        if (!isSerial()) capturePromptInput(data, len);
+        if (isSsh())
+            ssh_->writeShell(data, len);
+        else if (isSerial())
+            serial_.write(data, len);
+        else
+            pty_.write(data, len);
     }
+}
+
+SshDirectoryRequestId TerminalSession::requestSftpDirectory(
+    const std::wstring& path, std::size_t maximumEntries) {
+    return isSsh() ? ssh_->requestDirectory(path, maximumEntries) : 0;
+}
+
+std::optional<SshDirectoryListing> TerminalSession::takeSftpDirectoryResult(
+    SshDirectoryRequestId requestId) {
+    return isSsh() ? ssh_->takeDirectoryResult(requestId) : std::nullopt;
+}
+
+bool TerminalSession::sendSerialHexInput(const std::wstring& input,
+                                         std::wstring* error) {
+    if (!isSerial()) {
+        if (error) *error = L"The active session is not serial.";
+        return false;
+    }
+    if (!active_ || serial_.hasExited()) {
+        if (error) *error = L"The serial device is not connected.";
+        return false;
+    }
+    std::string bytes;
+    if (!parseSerialHexInput(input, bytes, error)) return false;
+    sendBytes(bytes.data(), bytes.size());
+    return true;
+}
+
+void TerminalSession::appendSerialText(const wchar_t* text, size_t len) {
+    if (!serialRawTextMode() || !active_ || serial_.hasExited() ||
+        !text || len == 0 || serialTextLine_.size() >= 64 * 1024)
+        return;
+    const size_t room = 64 * 1024 - serialTextLine_.size();
+    const size_t accepted = std::min(len, room);
+    const std::string utf8 = utf8FromWide(text, accepted);
+    if (utf8.empty()) return;
+    serialTextLine_.append(text, accepted);
+    terminal_.write(utf8.data(), utf8.size());
+    markRenderDirty();
+}
+
+void TerminalSession::backspaceSerialText() {
+    if (!serialRawTextMode() || serialTextLine_.empty()) return;
+    size_t remove = 1;
+    const wchar_t last = serialTextLine_.back();
+    if (last >= 0xDC00 && last <= 0xDFFF && serialTextLine_.size() >= 2) {
+        const wchar_t previous = serialTextLine_[serialTextLine_.size() - 2];
+        if (previous >= 0xD800 && previous <= 0xDBFF) remove = 2;
+    }
+    serialTextLine_.resize(serialTextLine_.size() - remove);
+    static constexpr char kErase[] = "\b \b";
+    terminal_.write(kErase, sizeof(kErase) - 1);
+    markRenderDirty();
+}
+
+void TerminalSession::clearSerialText() {
+    while (serialRawTextMode() && !serialTextLine_.empty())
+        backspaceSerialText();
+}
+
+void TerminalSession::submitSerialText() {
+    if (!serialRawTextMode() || !active_ || serial_.hasExited()) return;
+    std::string payload = utf8FromWide(serialTextLine_.c_str(),
+                                       serialTextLine_.size());
+    switch (serialProfile_->lineEnding) {
+    case SerialLineEnding::CarriageReturn: payload += '\r'; break;
+    case SerialLineEnding::LineFeed: payload += '\n'; break;
+    case SerialLineEnding::CarriageReturnLineFeed: payload += "\r\n"; break;
+    case SerialLineEnding::None: break;
+    }
+    serial_.write(payload.data(), payload.size());
+    static constexpr char kNewline[] = "\r\n";
+    terminal_.write(kNewline, sizeof(kNewline) - 1);
+    serialTextLine_.clear();
+    markRenderDirty();
 }
 
 void TerminalSession::capturePromptInput(const char* data, size_t len) {
@@ -378,7 +575,10 @@ void TerminalSession::resize(int cols, int rows, int cellWidthPx,
     cellW_ = cellWidthPx;
     cellH_ = cellHeightPx;
     terminal_.resize(cols, rows, cellWidthPx, cellHeightPx);
-    pty_.resize(static_cast<short>(cols), static_cast<short>(rows));
+    if (isSsh())
+        ssh_->resizeShell(cols, rows);
+    else if (!isSerial())
+        pty_.resize(static_cast<short>(cols), static_cast<short>(rows));
 }
 
 void TerminalSession::snapshot() {
