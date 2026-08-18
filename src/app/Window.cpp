@@ -664,8 +664,16 @@ LRESULT Window::wndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
         return 0;
     }
     case WM_SIZE:
+        // Windows reports a zero-sized client area while the window is
+        // minimized.  Do not render that transient geometry: Tab::layout()
+        // intentionally clamps tiny panes to one row, and applying that
+        // fallback here would resize every ConPTY to a one-row terminal while
+        // the window is hidden.  The shell can then redraw at a stale cursor
+        // position when the window is restored, leaving large blank regions.
+        if (wParam == SIZE_MINIMIZED) return 0;
         if (LOWORD(lParam) && HIWORD(lParam)) {
             renderer_->resize(LOWORD(lParam), HIWORD(lParam));
+            markRenderDirty();
             // Interactive resize runs a modal loop that starves our render
             // loop; paint here so the window tracks the drag instead of
             // showing undefined flip-model buffer contents.
@@ -915,6 +923,15 @@ void Window::regions(Rect& leftBar, Rect& rightPanel, Rect& tabBar,
 }
 
 void Window::renderFrame() {
+    // A minimized window can still receive the idle tick or PTY wakeups.  Its
+    // client rect is zero during that period; never let that transient size
+    // reach pane layout, where it would become the one-row minimum terminal
+    // size and perturb the shell's cursor/scroll state.
+    if (!hwnd_ || IsIconic(hwnd_)) return;
+    RECT client{};
+    if (!GetClientRect(hwnd_, &client) || client.right <= client.left ||
+        client.bottom <= client.top)
+        return;
     reapExitedPanes();
     if (tabs_.empty()) return;
 
