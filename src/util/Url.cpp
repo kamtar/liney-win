@@ -86,8 +86,9 @@ std::vector<UrlSpan> detectHttpUrls(const std::wstring& text) {
         trimUrlPunctuation(url);
         if (url.size() <= schemeLength) continue;
 
-        result.push_back({http, http + url.size(), std::move(url)});
-        search = http + url.size();
+        const size_t urlLength = url.size();
+        result.push_back({http, http + urlLength, std::move(url)});
+        search = http + urlLength;
     }
     return result;
 }
