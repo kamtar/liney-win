@@ -12,7 +12,7 @@
 // Windows' case-insensitive filesystem.
 
 #include <windows.h>
-#include <objbase.h>  // CoInitializeEx (WIN32_LEAN_AND_MEAN excludes it)
+#include <ole2.h>     // OleInitialize (WIN32_LEAN_AND_MEAN excludes it)
 #include <dwrite.h>
 
 #include <cstdlib>  // __argc, __wargv
@@ -788,7 +788,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int nCmdShow) {
 
     liney::initializeDiagnostics(liney::kAppVersion);
     enablePerMonitorDpi();
-    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);  // for WIC image loading
+    // DoDragDrop requires OLE initialization, not just the underlying COM
+    // apartment setup. OleInitialize also provides the COM apartment needed
+    // by WIC and lets the file browser act as a native Windows drag source.
+    const HRESULT oleInit = OleInitialize(nullptr);
     int result = 1;
     {
         auto testDimension = [](const wchar_t* name, int fallback) {
@@ -817,6 +820,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int nCmdShow) {
             result = window.runMessageLoop();
         }
     }
+    if (SUCCEEDED(oleInit)) OleUninitialize();
     liney::diagnosticLog("application exiting");
     liney::markCleanShutdown();
     return result;
