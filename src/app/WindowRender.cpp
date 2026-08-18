@@ -777,6 +777,7 @@ void Window::refreshFileList() {
         session->context().role == SessionRole::Ssh &&
         session->context().sshProfile ? &*session->context().sshProfile : nullptr;
     if (remoteProfile) {
+        localFileSession_ = nullptr;
         const std::wstring sessionKey =
             sshProfileTarget(*remoteProfile) + L":" +
             std::to_wstring(remoteProfile->port) + L":" +
@@ -876,6 +877,12 @@ void Window::refreshFileList() {
         return;
     }
 
+    // The row vector is shared by the local and SFTP renderers. When the
+    // focused session crosses that boundary, discard the old transport's
+    // rows before the local cache-key check; otherwise a local tab with the
+    // same cwd can incorrectly reuse the previous SSH directory.
+    const bool leavingRemoteListing = remoteSftpSession_ != nullptr ||
+        !remoteSessionKey_.empty() || remoteFileBusy_;
     remoteSftpSession_ = nullptr;
     remoteSftpRequestId_ = 0;
     remoteFileBusy_ = false;
@@ -884,6 +891,12 @@ void Window::refreshFileList() {
     remoteFileError_.clear();
     remoteRetryAt_ = 0;
     remoteRetryCount_ = 0;
+    if (leavingRemoteListing) {
+        remoteListedDir_.clear();
+        listedDir_.clear();
+        fileEntries_.clear();
+        fileScrollOffset_ = 0.0f;
+    }
 
     // A tab switch can keep the same cwd while still changing the filesystem
     // session (and therefore the directory contents). Treat the session as
