@@ -397,6 +397,9 @@ void Window::drawLeftSidebar(const Rect& r) {
 
 void Window::drawFilesPanel(const Rect& r) {
     fileBreadcrumbs_.clear();
+    fileScrollTrackRect_ = {};
+    fileScrollThumbRect_ = {};
+    fileScrollMaxOffset_ = 0.0f;
     renderer_->fillRect(r.x, r.y, r.w, r.h, uiTheme_.sidebarBg);
     renderer_->fillRect(r.x, r.y, 1.0f, r.h, uiTheme_.border);
     const float pad = metrics_.sidebarPad();
@@ -496,30 +499,37 @@ void Window::drawFilesPanel(const Rect& r) {
             r.x + pad, y + tDY, r.w - pad * 2.0f, th, uiTheme_.dim, false);
         return;
     }
-    if (remote && remoteFileOperationRequestId_ != 0) {
+    // Keep an already loaded directory on screen while an in-place refresh is
+    // running (for example after rename/delete). Navigation to another
+    // directory still shows the loading state because the cached rows belong
+    // to a different path.
+    const bool keepRemoteListing = remote && !fileEntries_.empty() &&
+        remoteListedDir_ == visiblePath;
+    if (remote && remoteFileOperationRequestId_ != 0 && !keepRemoteListing) {
         renderer_->drawText(L"Updating remote folder…", r.x + pad,
                             y + tDY, r.w - pad * 2.0f, th, uiTheme_.dim,
                             false);
         return;
     }
-    if (remote && remoteFileBusy_) {
+    if (remote && remoteFileBusy_ && !keepRemoteListing) {
         renderer_->drawText(L"Loading remote folder…", r.x + pad, y + tDY,
                             r.w - pad * 2.0f, th, uiTheme_.dim, false);
         return;
     }
-    if (remote && !remoteFileError_.empty()) {
+    if (remote && !remoteFileError_.empty() && !keepRemoteListing) {
         renderer_->drawText(remoteFileError_, r.x + pad, y + tDY,
                             r.w - pad * 2.0f, th, uiTheme_.dim, false);
         return;
     }
 
     const float isz = th * 0.78f;
+    float listRight = r.right() - pad;
     auto iconRow = [&](IconKind k, const std::wstring& txt, const Color& tc,
                        const Color& ic) {
         renderer_->drawIcon(k, r.x + pad, y + (rowH - isz) * 0.5f, isz, ic);
         const float tx = r.x + pad + isz + 7.0f;
-        renderer_->drawText(txt, tx, y + tDY, r.x + r.w - tx - pad, th, tc,
-                            false);
+        renderer_->drawText(txt, tx, y + tDY, std::max(1.0f, listRight - tx),
+                            th, tc, false);
     };
 
     const float contentTop = y;
@@ -528,7 +538,30 @@ void Window::drawFilesPanel(const Rect& r) {
         fileEntries_.size() + (showUp ? 1u : 0u));
     const float viewportHeight = std::max(0.0f, r.bottom() - contentTop);
     const float maxScroll = std::max(0.0f, contentHeight - viewportHeight);
+    fileScrollMaxOffset_ = maxScroll;
     fileScrollOffset_ = std::clamp(fileScrollOffset_, 0.0f, maxScroll);
+
+    if (maxScroll > 0.0f && viewportHeight > 0.0f) {
+        const float trackW = std::max(3.0f * dpiScale_, 4.0f * dpiScale_);
+        const float trackX = r.right() - pad - trackW;
+        const float trackY = contentTop + 2.0f * dpiScale_;
+        const float trackH = std::max(
+            1.0f, r.bottom() - trackY - 2.0f * dpiScale_);
+        const float thumbH = std::min(
+            trackH, std::max(14.0f * dpiScale_,
+                             trackH * viewportHeight / contentHeight));
+        const float travel = std::max(0.0f, trackH - thumbH);
+        const float position = maxScroll > 0.0f
+            ? fileScrollOffset_ / maxScroll : 0.0f;
+        fileScrollTrackRect_ = {trackX, trackY, trackW, trackH};
+        fileScrollThumbRect_ = {trackX, trackY + travel * position,
+                                trackW, thumbH};
+        listRight = trackX - 5.0f * dpiScale_;
+    }
+
+    const bool clipFileRows = viewportHeight > 0.0f;
+    if (clipFileRows)
+        renderer_->pushClip(r.x, contentTop, r.w, viewportHeight);
     y = contentTop - fileScrollOffset_;
 
     if (showUp) {
@@ -536,7 +569,10 @@ void Window::drawFilesPanel(const Rect& r) {
         rowBackground(row);
         if (row.bottom() >= contentTop && row.y <= r.bottom()) {
             iconRow(IconKind::Up, L"..", uiTheme_.dim, uiTheme_.dim);
-            sidebarRows_.push_back({ row, RowKind::FileUp, -1, -1, L"" });
+            Rect hit = row;
+            hit.y = std::max(hit.y, contentTop);
+            hit.h = std::min(row.bottom(), r.bottom()) - hit.y;
+            sidebarRows_.push_back({ hit, RowKind::FileUp, -1, -1, L"" });
         }
         y += rowH;
     }
@@ -548,12 +584,31 @@ void Window::drawFilesPanel(const Rect& r) {
             iconRow(e.isDir ? IconKind::Folder : IconKind::File, e.name,
                     e.isDir ? uiTheme_.text : uiTheme_.dim,
                     e.isDir ? Color{ 220, 190, 110 } : uiTheme_.dim);
+            Rect hit = row;
+            hit.y = std::max(hit.y, contentTop);
+            hit.h = std::min(row.bottom(), r.bottom()) - hit.y;
             sidebarRows_.push_back(
-                { row,
+                { hit,
                   e.isDir ? RowKind::FileDir : RowKind::FileEntry, -1, -1,
                   e.path });
         }
         y += rowH;
+    }
+
+    if (clipFileRows)
+        renderer_->popClip();
+
+    if (fileScrollTrackRect_.h > 0.0f) {
+        renderer_->fillRoundedRect(
+            fileScrollTrackRect_.x, fileScrollTrackRect_.y,
+            fileScrollTrackRect_.w, fileScrollTrackRect_.h,
+            fileScrollTrackRect_.w * 0.5f,
+            blendColor(uiTheme_.sidebarBg, uiTheme_.border, 0.72f));
+        renderer_->fillRoundedRect(
+            fileScrollThumbRect_.x, fileScrollThumbRect_.y,
+            fileScrollThumbRect_.w, fileScrollThumbRect_.h,
+            fileScrollThumbRect_.w * 0.5f,
+            blendColor(uiTheme_.sidebarBg, uiTheme_.dim, 0.64f));
     }
 }
 
@@ -564,6 +619,7 @@ void Window::refreshFileList() {
         session->context().role == SessionRole::Ssh &&
         session->context().sshProfile ? &*session->context().sshProfile : nullptr;
     if (remoteProfile) {
+        localFileSession_ = nullptr;
         const std::wstring sessionKey =
             sshProfileTarget(*remoteProfile) + L":" +
             std::to_wstring(remoteProfile->port) + L":" +
@@ -677,7 +733,6 @@ void Window::refreshFileList() {
     remoteFileBusy_ = false;
     remoteSessionKey_.clear();
     remoteListedRequestKey_.clear();
-    remoteFileListedAt_ = 0;
     remoteFileError_.clear();
     remoteRetryAt_ = 0;
     remoteRetryCount_ = 0;
@@ -737,7 +792,6 @@ void Window::refreshFileList() {
             remoteBrowsePath_ = L"/";
             remoteListedDir_.clear();
             remoteListedRequestKey_.clear();
-            remoteFileListedAt_ = 0;
             remoteFileError_.clear();
             fileEntries_.clear();
             remoteFileBusy_ = false;
@@ -779,7 +833,6 @@ void Window::refreshFileList() {
                               });
                     remoteListedRequestKey_ =
                         remoteSessionKey_ + L"\n" + remoteBrowsePath_;
-                    remoteFileListedAt_ = GetTickCount64();
                     remoteRetryAt_ = 0;
                     remoteRetryCount_ = 0;
                 } else {
@@ -799,16 +852,6 @@ void Window::refreshFileList() {
 
         const std::wstring nextRequestKey =
             remoteSessionKey_ + L"\n" + remoteBrowsePath_;
-        // A successful listing can predate `sudo su`. Recheck periodically so
-        // the same authenticated session picks up the sudo timestamp and
-        // exposes directories such as /root without requiring a reconnect.
-        const ULONGLONG now = GetTickCount64();
-        if (!remoteFileBusy_ && remoteFileError_.empty() &&
-            remoteListedRequestKey_ == nextRequestKey &&
-            remoteFileListedAt_ != 0 &&
-            now - remoteFileListedAt_ >= 3000) {
-            remoteListedRequestKey_.clear();
-        }
         if (remoteListedRequestKey_ != nextRequestKey) {
             remoteRetryAt_ = 0;
             remoteRetryCount_ = 0;
@@ -842,8 +885,17 @@ void Window::refreshFileList() {
     remoteRetryAt_ = 0;
     remoteRetryCount_ = 0;
 
-    // Follow the focused pane's cwd unless the user navigated manually.
-    if (session && session->cwd() != lastActiveCwd_) {
+    // A tab switch can keep the same cwd while still changing the filesystem
+    // session (and therefore the directory contents). Treat the session as
+    // part of the local listing cache key, not just the displayed path.
+    if (session != localFileSession_) {
+        localFileSession_ = session;
+        lastActiveCwd_ = session ? session->cwd() : L"";
+        browsePath_ = lastActiveCwd_;
+        listedDir_.clear();
+        fileEntries_.clear();
+        fileScrollOffset_ = 0.0f;
+    } else if (session && session->cwd() != lastActiveCwd_) {
         lastActiveCwd_ = session->cwd();
         browsePath_ = session->cwd();
         fileScrollOffset_ = 0.0f;

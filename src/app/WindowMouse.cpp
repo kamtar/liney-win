@@ -183,9 +183,7 @@ bool openTerminalUrl(HWND hwnd, const std::wstring& url) {
 
 void Window::invalidateFileList() {
     listedDir_.clear();
-    remoteListedDir_.clear();
     remoteListedRequestKey_.clear();
-    remoteFileListedAt_ = 0;
     remoteFileError_.clear();
     remoteRetryAt_ = 0;
     remoteRetryCount_ = 0;
@@ -386,6 +384,8 @@ void Window::openFileMenu(int xi, int yi) {
                 202, L"Rename");
     AppendMenuW(menu, MF_STRING | (selectedPath.empty() ? MF_GRAYED : 0),
                 203, L"Delete");
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING, 204, L"Refresh");
     POINT point{xi, yi};
     ClientToScreen(hwnd_, &point);
     const int action = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
@@ -429,6 +429,11 @@ void Window::openFileMenu(int xi, int yi) {
         }
         invalidateFileList();
         showToast(L"Item pasted.");
+        return;
+    }
+
+    if (action == 204) {
+        invalidateFileList();
         return;
     }
 
@@ -504,6 +509,22 @@ void Window::onMouseDown(int xi, int yi) {
             return;
         }
         if (filesPanelVisible_ && rightPanel.contains(x, y)) {
+            if (fileScrollThumbRect_.contains(x, y)) {
+                fileScrollDragging_ = true;
+                fileScrollDragOffset_ = y - fileScrollThumbRect_.y;
+                SetCapture(hwnd_);
+                return;
+            }
+            if (fileScrollTrackRect_.contains(x, y)) {
+                const float page = std::max(metrics_.rowH() * 4.0f,
+                                            fileScrollMaxOffset_ * 0.8f);
+                fileScrollOffset_ = std::clamp(
+                    fileScrollOffset_ + (y < fileScrollThumbRect_.y
+                                             ? -page : page),
+                    0.0f, fileScrollMaxOffset_);
+                markRenderDirty();
+                return;
+            }
             for (const auto& breadcrumb : fileBreadcrumbs_) {
                 if (!breadcrumb.first.contains(x, y)) continue;
                 const bool remote = activeSession() &&
@@ -1221,6 +1242,19 @@ void Window::onMouseMove(int xi, int yi) {
         updatePanelWidthFromPointer(xi);
         return;
     }
+    if (fileScrollDragging_) {
+        const float travel = fileScrollTrackRect_.h -
+            fileScrollThumbRect_.h;
+        if (travel > 0.0f && fileScrollMaxOffset_ > 0.0f) {
+            const float thumbY = static_cast<float>(yi) -
+                fileScrollDragOffset_;
+            const float position = std::clamp(
+                (thumbY - fileScrollTrackRect_.y) / travel, 0.0f, 1.0f);
+            fileScrollOffset_ = position * fileScrollMaxOffset_;
+            markRenderDirty();
+        }
+        return;
+    }
     if (fileDragPending_) {
         const int dragX = std::abs(xi - fileDragStart_.x);
         const int dragY = std::abs(yi - fileDragStart_.y);
@@ -1307,6 +1341,13 @@ void Window::onMouseUp(int xi, int yi) {
         markRenderDirty();
         return;
     }
+    if (fileScrollDragging_) {
+        fileScrollDragging_ = false;
+        fileScrollDragOffset_ = 0.0f;
+        ReleaseCapture();
+        markRenderDirty();
+        return;
+    }
     if (fileDragPending_) {
         finishFileDrag(xi, yi);
         return;
@@ -1371,7 +1412,8 @@ bool Window::paneCellAt(const Pane* p, int px, int py, int& cx, int& cy) const {
 }
 
 void Window::clearSelection() {
-    if (fileDragPending_ && GetCapture() == hwnd_) ReleaseCapture();
+    if ((fileDragPending_ || fileScrollDragging_) && GetCapture() == hwnd_)
+        ReleaseCapture();
     selecting_ = false;
     if (selPane_ && selPane_->session) selPane_->session->selectionClear();
     selPane_ = nullptr;
@@ -1381,6 +1423,8 @@ void Window::clearSelection() {
     fileDragActive_ = false;
     fileDragPath_.clear();
     fileDragSessionKey_.clear();
+    fileScrollDragging_ = false;
+    fileScrollDragOffset_ = 0.0f;
 }
 
 bool Window::paneHasSelection() const {

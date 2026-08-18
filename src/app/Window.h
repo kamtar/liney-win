@@ -413,13 +413,13 @@ private:
     std::wstring remoteSessionKey_;
     std::wstring remoteListedRequestKey_;
     std::wstring remoteListedDir_;
-    ULONGLONG remoteFileListedAt_ = 0;
     std::wstring remoteFileError_;
     std::wstring lastActiveCwd_;
     std::wstring listedDir_;
     struct FileEntry { std::wstring name; std::wstring path; bool isDir; };
     std::vector<FileEntry> fileEntries_;
     std::vector<std::pair<Rect, std::wstring>> fileBreadcrumbs_;
+    TerminalSession* localFileSession_ = nullptr;
     TerminalSession* remoteSftpSession_ = nullptr;
     SshDirectoryRequestId remoteSftpRequestId_ = 0;
     bool remoteFileBusy_ = false;
@@ -427,6 +427,11 @@ private:
     int remoteRetryCount_ = 0;
     float fileScrollOffset_ = 0.0f;
     int fileWheelRemainder_ = 0;
+    Rect fileScrollTrackRect_{};
+    Rect fileScrollThumbRect_{};
+    float fileScrollMaxOffset_ = 0.0f;
+    bool fileScrollDragging_ = false;
+    float fileScrollDragOffset_ = 0.0f;
     std::wstring fileClipboardPath_;
     bool fileClipboardRemote_ = false;
     bool fileClipboardIsDir_ = false;
