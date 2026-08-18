@@ -13,6 +13,7 @@
 #include <cstring>
 #include <deque>
 #include <cstdlib>
+#include <functional>
 #include <mutex>
 #include <string_view>
 #include <thread>
@@ -157,6 +158,13 @@ struct SshConnection::Impl {
         char name[4096]{};
     };
 
+    struct FileOperationRequest {
+        SshFileOperationRequestId id = 0;
+        SshFileOperationKind kind = SshFileOperationKind::Copy;
+        std::wstring source;
+        std::wstring destination;
+    };
+
     SshProfile profile;
     SshCredentials credentials;
     SshShellOptions shellOptions;
@@ -173,8 +181,12 @@ struct SshConnection::Impl {
     std::string inputQueue;
     std::optional<std::pair<int, int>> pendingResize;
     std::deque<DirectoryRequest> directoryQueue;
+    std::deque<FileOperationRequest> fileOperationQueue;
     std::mutex resultMutex;
     std::unordered_map<SshDirectoryRequestId, SshDirectoryListing> results;
+    std::mutex fileOperationResultMutex;
+    std::unordered_map<SshFileOperationRequestId, SshFileOperationResult>
+        fileOperationResults;
     SshDirectoryRequestId nextRequestId = 1;
     std::optional<DirectoryJob> directoryJob;
 
@@ -377,6 +389,22 @@ struct SshConnection::Impl {
                            SshDirectoryRequestId id) {
         std::lock_guard lock(resultMutex);
         results[id] = std::move(result);
+    }
+
+    void completeFileOperation(SshFileOperationResult result,
+                               SshFileOperationRequestId id) {
+        std::lock_guard lock(fileOperationResultMutex);
+        fileOperationResults[id] = std::move(result);
+    }
+
+    void failQueuedFileOperations(const std::wstring& error) {
+        std::deque<FileOperationRequest> queued;
+        {
+            std::lock_guard lock(queueMutex);
+            queued.swap(fileOperationQueue);
+        }
+        for (const FileOperationRequest& request : queued)
+            completeFileOperation({false, error}, request.id);
     }
 
     static std::string shellQuote(const std::string& value) {
@@ -991,13 +1019,255 @@ struct SshConnection::Impl {
         return true;
     }
 
+    SshFileOperationResult performFileOperation(
+        const FileOperationRequest& request) {
+        SshFileOperationResult result;
+        if (request.source.empty()) {
+            result.error = L"The remote source path is empty.";
+            return result;
+        }
+        if ((request.kind == SshFileOperationKind::Copy ||
+             request.kind == SshFileOperationKind::Move ||
+             request.kind == SshFileOperationKind::Rename) &&
+            request.destination.empty()) {
+            result.error = L"The remote destination path is empty.";
+            return result;
+        }
+        if (!sftp)
+            sftp = retryPointer([this] { return libssh2_sftp_init(session); },
+                                15000);
+        if (!sftp) {
+            result.error = sshError(session, L"Could not open SFTP subsystem");
+            return result;
+        }
+
+        const std::string source = wideToUtf8(request.source);
+        const std::string destination = wideToUtf8(request.destination);
+        if (source.empty() ||
+            ((request.kind == SshFileOperationKind::Copy ||
+              request.kind == SshFileOperationKind::Move ||
+              request.kind == SshFileOperationKind::Rename) &&
+             destination.empty())) {
+            result.error = L"The remote path is not valid UTF-8.";
+            return result;
+        }
+
+        auto sftpError = [this](const wchar_t* fallback) {
+            return std::wstring(fallback) + L" (SFTP error " +
+                   std::to_wstring(libssh2_sftp_last_error(sftp)) + L")";
+        };
+        auto isDirectory = [](const LIBSSH2_SFTP_ATTRIBUTES& attributes) {
+            return (attributes.flags & LIBSSH2_SFTP_ATTR_PERMISSIONS) != 0 &&
+                   (attributes.permissions & LIBSSH2_SFTP_S_IFMT) ==
+                       LIBSSH2_SFTP_S_IFDIR;
+        };
+        auto statPath = [&](const std::string& path,
+                            LIBSSH2_SFTP_ATTRIBUTES& attributes) {
+            std::memset(&attributes, 0, sizeof(attributes));
+            return retryInt([&] {
+                       return libssh2_sftp_lstat(sftp, path.c_str(),
+                                                &attributes);
+                   }) == 0;
+        };
+        auto joinPath = [](const std::string& parent,
+                           const std::string& name) {
+            if (parent.empty() || parent == "/") return std::string("/") + name;
+            return parent.back() == '/' ? parent + name : parent + "/" + name;
+        };
+
+        std::function<bool(const std::string&, std::vector<std::pair<
+            std::string, bool>>&, std::wstring&)> listDirectory;
+        listDirectory = [&](const std::string& path,
+                            std::vector<std::pair<std::string, bool>>& entries,
+                            std::wstring& error) {
+            LIBSSH2_SFTP_HANDLE* handle = retryPointer(
+                [&] { return libssh2_sftp_opendir(sftp, path.c_str()); });
+            if (!handle) {
+                error = sftpError(L"Could not open remote directory");
+                return false;
+            }
+            char name[4096]{};
+            for (;;) {
+                LIBSSH2_SFTP_ATTRIBUTES attributes{};
+                const int length = retryInt([&] {
+                    return libssh2_sftp_readdir(handle, name,
+                                               sizeof(name) - 1,
+                                               &attributes);
+                });
+                if (length == 0) break;
+                if (length < 0) {
+                    error = sftpError(L"Could not read remote directory");
+                    retryInt([&] { return libssh2_sftp_closedir(handle); });
+                    return false;
+                }
+                name[std::min<int>(length,
+                                   static_cast<int>(sizeof(name) - 1))] = '\0';
+                if (std::strcmp(name, ".") != 0 &&
+                    std::strcmp(name, "..") != 0)
+                    entries.emplace_back(name, isDirectory(attributes));
+            }
+            if (retryInt([&] { return libssh2_sftp_closedir(handle); }) != 0) {
+                error = sftpError(L"Could not close remote directory");
+                return false;
+            }
+            return true;
+        };
+
+        std::function<bool(const std::string&, const std::string&,
+                           std::wstring&)> copyTree;
+        copyTree = [&](const std::string& from, const std::string& to,
+                       std::wstring& error) {
+            LIBSSH2_SFTP_ATTRIBUTES attributes{};
+            if (!statPath(from, attributes)) {
+                error = sftpError(L"Could not inspect remote source");
+                return false;
+            }
+            if (isDirectory(attributes)) {
+                if (retryInt([&] {
+                        return libssh2_sftp_mkdir(sftp, to.c_str(), 0755);
+                    }) != 0) {
+                    error = sftpError(L"Could not create remote directory");
+                    return false;
+                }
+                std::vector<std::pair<std::string, bool>> entries;
+                if (!listDirectory(from, entries, error)) return false;
+                for (const auto& entry : entries) {
+                    if (!copyTree(joinPath(from, entry.first),
+                                  joinPath(to, entry.first), error))
+                        return false;
+                }
+                return true;
+            }
+
+            LIBSSH2_SFTP_HANDLE* input = retryPointer([&] {
+                return libssh2_sftp_open(sftp, from.c_str(),
+                                         LIBSSH2_FXF_READ, 0);
+            });
+            if (!input) {
+                error = sftpError(L"Could not open remote source");
+                return false;
+            }
+            LIBSSH2_SFTP_HANDLE* output = retryPointer([&] {
+                return libssh2_sftp_open(
+                    sftp, to.c_str(),
+                    LIBSSH2_FXF_WRITE | LIBSSH2_FXF_CREAT | LIBSSH2_FXF_TRUNC,
+                    0644);
+            });
+            if (!output) {
+                retryInt([&] { return libssh2_sftp_close(input); });
+                error = sftpError(L"Could not create remote destination");
+                return false;
+            }
+
+            char buffer[64 * 1024];
+            bool ok = true;
+            for (;;) {
+                const int read = retryInt([&] {
+                    return static_cast<int>(libssh2_sftp_read(
+                        input, buffer, sizeof(buffer)));
+                });
+                if (read == 0) break;
+                if (read < 0) {
+                    error = sftpError(L"Could not read remote source");
+                    ok = false;
+                    break;
+                }
+                int offset = 0;
+                while (offset < read) {
+                    const int written = retryInt([&] {
+                        return static_cast<int>(libssh2_sftp_write(
+                            output, buffer + offset,
+                            static_cast<std::size_t>(read - offset)));
+                    });
+                    if (written <= 0) {
+                        error = sftpError(L"Could not write remote destination");
+                        ok = false;
+                        break;
+                    }
+                    offset += written;
+                }
+                if (!ok) break;
+            }
+            if (retryInt([&] { return libssh2_sftp_close(input); }) != 0 && ok) {
+                error = sftpError(L"Could not close remote source");
+                ok = false;
+            }
+            if (retryInt([&] { return libssh2_sftp_close(output); }) != 0 && ok) {
+                error = sftpError(L"Could not close remote destination");
+                ok = false;
+            }
+            return ok;
+        };
+
+        std::function<bool(const std::string&, std::wstring&)> deleteTree;
+        deleteTree = [&](const std::string& path, std::wstring& error) {
+            LIBSSH2_SFTP_ATTRIBUTES attributes{};
+            if (!statPath(path, attributes)) {
+                error = sftpError(L"Could not inspect remote path");
+                return false;
+            }
+            if (isDirectory(attributes)) {
+                std::vector<std::pair<std::string, bool>> entries;
+                if (!listDirectory(path, entries, error)) return false;
+                for (const auto& entry : entries)
+                    if (!deleteTree(joinPath(path, entry.first), error))
+                        return false;
+                if (retryInt([&] {
+                        return libssh2_sftp_rmdir(sftp, path.c_str());
+                    }) != 0) {
+                    error = sftpError(L"Could not remove remote directory");
+                    return false;
+                }
+            } else if (retryInt([&] {
+                           return libssh2_sftp_unlink(sftp, path.c_str());
+                       }) != 0) {
+                error = sftpError(L"Could not remove remote file");
+                return false;
+            }
+            return true;
+        };
+
+        if (request.kind == SshFileOperationKind::Copy) {
+            LIBSSH2_SFTP_ATTRIBUTES existing{};
+            if (statPath(destination, existing)) {
+                result.error = L"The remote destination already exists.";
+                return result;
+            }
+            result.ok = copyTree(source, destination, result.error);
+            return result;
+        }
+        if (request.kind == SshFileOperationKind::Delete) {
+            result.ok = deleteTree(source, result.error);
+            return result;
+        }
+        LIBSSH2_SFTP_ATTRIBUTES existing{};
+        if (statPath(destination, existing)) {
+            result.error = L"The remote destination already exists.";
+            return result;
+        }
+        if (retryInt([&] {
+                return libssh2_sftp_rename(sftp, source.c_str(),
+                                           destination.c_str());
+            }) != 0) {
+            result.error = sftpError(request.kind == SshFileOperationKind::Rename
+                                         ? L"Could not rename remote path"
+                                         : L"Could not move remote path");
+            return result;
+        }
+        result.ok = true;
+        return result;
+    }
+
     void run() {
         std::wstring error;
         if (!establish(&error)) {
             if (callbacks.onError && !stopRequested.load(std::memory_order_acquire))
                 callbacks.onError(error);
             stopRequested.store(true, std::memory_order_release);
-            failQueuedDirectories(error.empty() ? L"SSH connection failed" : error);
+            const std::wstring reason =
+                error.empty() ? L"SSH connection failed" : error;
+            failQueuedDirectories(reason);
+            failQueuedFileOperations(reason);
             closeResources();
             exited.store(true, std::memory_order_release);
             if (callbacks.onExit) callbacks.onExit();
@@ -1028,6 +1298,21 @@ struct SshConnection::Impl {
                 }
             }
             if (directoryJob) didWork |= stepDirectory();
+            if (!directoryJob) {
+                std::optional<FileOperationRequest> request;
+                {
+                    std::lock_guard lock(queueMutex);
+                    if (!fileOperationQueue.empty()) {
+                        request = std::move(fileOperationQueue.front());
+                        fileOperationQueue.pop_front();
+                    }
+                }
+                if (request) {
+                    completeFileOperation(performFileOperation(*request),
+                                           request->id);
+                    didWork = true;
+                }
+            }
             if (!didWork) waitForIo(50);
         }
 
@@ -1037,6 +1322,7 @@ struct SshConnection::Impl {
                 : L"SSH session disconnected";
         stopRequested.store(true, std::memory_order_release);
         failQueuedDirectories(reason);
+        failQueuedFileOperations(reason);
         closeResources();
         exited.store(true, std::memory_order_release);
         if (callbacks.onExit) callbacks.onExit();
@@ -1160,6 +1446,30 @@ std::optional<SshDirectoryListing> SshConnection::takeDirectoryResult(
     if (found == impl_->results.end()) return std::nullopt;
     SshDirectoryListing result = std::move(found->second);
     impl_->results.erase(found);
+    return result;
+}
+
+SshFileOperationRequestId SshConnection::requestFileOperation(
+    SshFileOperationKind kind, const std::wstring& source,
+    const std::wstring& destination) {
+    if (!impl_->started.load(std::memory_order_acquire) ||
+        impl_->stopRequested.load(std::memory_order_acquire))
+        return 0;
+    std::lock_guard lock(impl_->queueMutex);
+    const SshFileOperationRequestId id = impl_->nextRequestId++;
+    impl_->fileOperationQueue.push_back({id, kind, source, destination});
+    impl_->queueCv.notify_one();
+    return id;
+}
+
+std::optional<SshFileOperationResult>
+SshConnection::takeFileOperationResult(SshFileOperationRequestId requestId) {
+    if (requestId == 0) return std::nullopt;
+    std::lock_guard lock(impl_->fileOperationResultMutex);
+    const auto found = impl_->fileOperationResults.find(requestId);
+    if (found == impl_->fileOperationResults.end()) return std::nullopt;
+    SshFileOperationResult result = std::move(found->second);
+    impl_->fileOperationResults.erase(found);
     return result;
 }
 

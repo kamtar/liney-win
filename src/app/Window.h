@@ -198,8 +198,19 @@ private:
     void onMouseUp(int x, int y);
     void updatePanelWidthFromPointer(int x);
     void onWheel(int delta, int x, int y);
+    void onFilePanelWheel(int delta);
     bool updateCursor();      // WM_SETCURSOR: I-beam over text, resize over dividers
     void openPaneMenu(int x, int y);  // right-click in a pane: copy/paste/find…
+    void openTerminalUrlMenu(const std::wstring& url, int x, int y);
+    void openFileMenu(int x, int y);
+    void activateFileRow(bool isDir, const std::wstring& path);
+    void finishFileDrag(int x, int y);
+    void requestRemoteFileOperation(SshFileOperationKind kind,
+                                    const std::wstring& source,
+                                    const std::wstring& destination,
+                                    const std::wstring& message);
+    void pollRemoteFileOperation();
+    void invalidateFileList();
     void scrollActive(int lines);
     int activePaneRows() const;
     void sendToActive(const char* data, size_t len);
@@ -414,6 +425,23 @@ private:
     bool remoteFileBusy_ = false;
     ULONGLONG remoteRetryAt_ = 0;
     int remoteRetryCount_ = 0;
+    float fileScrollOffset_ = 0.0f;
+    int fileWheelRemainder_ = 0;
+    std::wstring fileClipboardPath_;
+    bool fileClipboardRemote_ = false;
+    bool fileClipboardIsDir_ = false;
+    std::wstring fileClipboardSessionKey_;
+    bool fileDragPending_ = false;
+    bool fileDragActive_ = false;
+    bool fileDragRemote_ = false;
+    bool fileDragIsDir_ = false;
+    std::wstring fileDragPath_;
+    std::wstring fileDragSessionKey_;
+    POINT fileDragStart_{};
+    SshFileOperationRequestId remoteFileOperationRequestId_ = 0;
+    TerminalSession* remoteFileOperationSession_ = nullptr;
+    std::wstring remoteFileOperationSessionKey_;
+    std::wstring remoteFileOperationMessage_;
 
     // Selection gesture state (the selection itself is terminal-owned).
     bool selecting_ = false;       // a text-selection drag is in progress

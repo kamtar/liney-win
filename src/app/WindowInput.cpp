@@ -33,6 +33,25 @@ int Window::activePaneRows() const {
 }
 
 void Window::onWheel(int delta, int xi, int yi) {
+    Rect leftBar, rightPanel, tabBar, panes;
+    regions(leftBar, rightPanel, tabBar, panes);
+    if (filesPanelVisible_ && rightPanel.contains(static_cast<float>(xi),
+                                                   static_cast<float>(yi))) {
+        onFilePanelWheel(delta);
+        return;
+    }
+
+    // Wheel input is local to the surface under the pointer. In particular,
+    // don't let hovering the workspace rail or tab strip scroll the focused
+    // terminal by accident.
+    if (!panes.contains(static_cast<float>(xi), static_cast<float>(yi))) return;
+    Tab* hoveredTab = activeTab();
+    Pane* hoveredPane = hoveredTab
+        ? hoveredTab->hitTest(static_cast<float>(xi), static_cast<float>(yi))
+        : nullptr;
+    TerminalSession* hoveredSession = hoveredPane ? hoveredPane->session.get() : nullptr;
+    if (!hoveredSession) return;
+
     // One notch (WHEEL_DELTA) scrolls 3 lines into history (+) or toward live.
     const int lines = (delta / WHEEL_DELTA) * 3;
     if (lines == 0) return;
@@ -46,19 +65,29 @@ void Window::onWheel(int delta, int xi, int yi) {
                     forwarded;
     if (forwarded) return;
 
-    if (auto* s = activeSession()) {
+    if (hoveredSession) {
         // Full-screen apps (vim/less/htop) run on the alternate screen, which
         // has no scrollback — send arrow keys so the wheel scrolls the app.
-        if (s->altScreenActive()) {
-            const bool app = s->applicationCursorKeys();
+        if (hoveredSession->altScreenActive()) {
+            const bool app = hoveredSession->applicationCursorKeys();
             const char* seq = lines > 0 ? (app ? "\x1bOA" : "\x1b[A")
                                         : (app ? "\x1bOB" : "\x1b[B");
             for (int i = 0, n = lines > 0 ? lines : -lines; i < n; ++i)
-                s->sendBytes(seq, 3);
+                hoveredSession->sendBytes(seq, 3);
             return;
         }
     }
-    scrollActive(lines);
+    hoveredSession->scrollViewport(lines);
+}
+
+void Window::onFilePanelWheel(int delta) {
+    fileWheelRemainder_ += delta;
+    const int notches = fileWheelRemainder_ / WHEEL_DELTA;
+    fileWheelRemainder_ %= WHEEL_DELTA;
+    if (notches == 0) return;
+    fileScrollOffset_ -= static_cast<float>(notches * 3) * metrics_.rowH();
+    if (fileScrollOffset_ < 0.0f) fileScrollOffset_ = 0.0f;
+    markRenderDirty();
 }
 
 void Window::sendUtf16(const wchar_t* s, size_t len) {

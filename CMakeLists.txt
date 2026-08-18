@@ -52,6 +52,7 @@ add_executable(liney_win WIN32
   src/app/WindowPalette.cpp
   src/app/WindowSession.cpp
   src/app/WindowAi.cpp
+  src/app/TerminalLinks.cpp
   src/app/SettingsDialog.cpp
   src/app/Tab.cpp
   src/app/TabStripLayout.cpp
@@ -88,6 +89,7 @@ add_executable(liney_win WIN32
   src/util/Dialogs.cpp
   src/util/Base64.cpp
   src/util/Http.cpp
+  src/util/Url.cpp
   src/util/Diagnostics.cpp
   src/util/Authenticode.cpp
   src/util/AccessibilityProvider.cpp

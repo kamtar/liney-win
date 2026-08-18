@@ -1,6 +1,7 @@
 #include "app/Window.h"
 #include "app/WindowInternal.h"
 #include "app/TabStripLayout.h"
+#include "app/TerminalLinks.h"
 #include "app/BuiltinIcons.h"
 #include "core/RenderSignal.h"
 
@@ -470,10 +471,14 @@ void Window::drawFilesPanel(const Rect& r) {
                                     uiTheme_.dim, false);
                 bx += metrics_.cellW * 1.6f;
             }
+            const float available = std::max(1.0f, r.right() - pad - bx);
+            const size_t remaining = crumbs.size() - i - 1;
+            const float reserved = static_cast<float>(remaining) *
+                (metrics_.cellW * 2.5f);
             const float width = std::min(
                 metrics_.cellW *
                     (static_cast<float>(crumbs[i].first.size()) + 1.0f),
-                std::max(1.0f, r.right() - pad - bx));
+                std::max(1.0f, available - reserved));
             Rect hit{bx, y, width, rowH};
             renderer_->drawText(crumbs[i].first, bx, y + tDY, width, th,
                                 i + 1 == crumbs.size() ? uiTheme_.text
@@ -481,7 +486,6 @@ void Window::drawFilesPanel(const Rect& r) {
                                 i + 1 == crumbs.size());
             fileBreadcrumbs_.push_back({hit, crumbs[i].second});
             bx += width;
-            if (bx >= r.right() - pad) break;
         }
     }
     y += rowH + 4.0f;
@@ -490,6 +494,12 @@ void Window::drawFilesPanel(const Rect& r) {
         renderer_->drawText(
             L"Open this host from the SSH sidebar to browse its files.",
             r.x + pad, y + tDY, r.w - pad * 2.0f, th, uiTheme_.dim, false);
+        return;
+    }
+    if (remote && remoteFileOperationRequestId_ != 0) {
+        renderer_->drawText(L"Updating remote folder…", r.x + pad,
+                            y + tDY, r.w - pad * 2.0f, th, uiTheme_.dim,
+                            false);
         return;
     }
     if (remote && remoteFileBusy_) {
@@ -512,22 +522,37 @@ void Window::drawFilesPanel(const Rect& r) {
                             false);
     };
 
-    if (!visiblePath.empty() && (!remote || visiblePath != L"/")) {
+    const float contentTop = y;
+    const bool showUp = !visiblePath.empty() && (!remote || visiblePath != L"/");
+    const float contentHeight = rowH * static_cast<float>(
+        fileEntries_.size() + (showUp ? 1u : 0u));
+    const float viewportHeight = std::max(0.0f, r.bottom() - contentTop);
+    const float maxScroll = std::max(0.0f, contentHeight - viewportHeight);
+    fileScrollOffset_ = std::clamp(fileScrollOffset_, 0.0f, maxScroll);
+    y = contentTop - fileScrollOffset_;
+
+    if (showUp) {
         const Rect row{ r.x, y, r.w, rowH };
         rowBackground(row);
-        iconRow(IconKind::Up, L"..", uiTheme_.dim, uiTheme_.dim);
-        sidebarRows_.push_back({ row, RowKind::FileUp, -1, -1, L"" });
+        if (row.bottom() >= contentTop && row.y <= r.bottom()) {
+            iconRow(IconKind::Up, L"..", uiTheme_.dim, uiTheme_.dim);
+            sidebarRows_.push_back({ row, RowKind::FileUp, -1, -1, L"" });
+        }
         y += rowH;
     }
     for (const FileEntry& e : fileEntries_) {
         if (y > r.bottom()) break;
         const Rect row{ r.x, y, r.w, rowH };
-        rowBackground(row);
-        iconRow(e.isDir ? IconKind::Folder : IconKind::File, e.name,
-                e.isDir ? uiTheme_.text : uiTheme_.dim, e.isDir ? Color{ 220, 190, 110 } : uiTheme_.dim);
-        sidebarRows_.push_back(
-            { row,
-              e.isDir ? RowKind::FileDir : RowKind::FileEntry, -1, -1, e.path });
+        if (row.bottom() >= contentTop && row.y <= r.bottom()) {
+            rowBackground(row);
+            iconRow(e.isDir ? IconKind::Folder : IconKind::File, e.name,
+                    e.isDir ? uiTheme_.text : uiTheme_.dim,
+                    e.isDir ? Color{ 220, 190, 110 } : uiTheme_.dim);
+            sidebarRows_.push_back(
+                { row,
+                  e.isDir ? RowKind::FileDir : RowKind::FileEntry, -1, -1,
+                  e.path });
+        }
         y += rowH;
     }
 }
@@ -690,6 +715,7 @@ void Window::refreshFileList() {
 #endif
 
 void Window::refreshFileList() {
+    pollRemoteFileOperation();
 
     TerminalSession* session = activeSession();
     const SshProfile* remoteProfile = session &&
@@ -715,6 +741,7 @@ void Window::refreshFileList() {
             remoteFileError_.clear();
             fileEntries_.clear();
             remoteFileBusy_ = false;
+            fileScrollOffset_ = 0.0f;
             remoteRetryAt_ = 0;
             remoteRetryCount_ = 0;
         }
@@ -819,6 +846,7 @@ void Window::refreshFileList() {
     if (session && session->cwd() != lastActiveCwd_) {
         lastActiveCwd_ = session->cwd();
         browsePath_ = session->cwd();
+        fileScrollOffset_ = 0.0f;
     }
     if (browsePath_ == listedDir_) return;
     listedDir_ = browsePath_;
@@ -1115,6 +1143,22 @@ void Window::drawPanes(const Rect& r) {
             if (renderer_->drawImage(image.path, ix, iy, iw, ih))
                 SetPropW(hwnd_, L"Liney.InlineImageActive",
                          reinterpret_cast<HANDLE>(1));
+        }
+        // Plain-text HTTP(S) URLs are not OSC 8 hyperlinks, so underline the
+        // spans we detect in the visible grid as a lightweight affordance.
+        for (int y = 0; y < leaf->session->grid().rows; ++y) {
+            const std::vector<TerminalUrlHit> urls =
+                detectTerminalUrls(leaf->session->grid(), y);
+            for (const TerminalUrlHit& url : urls) {
+                const float uy = pr.y + pad +
+                    static_cast<float>(y + 1) * metrics_.cellH -
+                    std::max(1.0f, dpiScale_);
+                renderer_->fillRect(
+                    pr.x + pad + static_cast<float>(url.startCell) * metrics_.cellW,
+                    uy,
+                    static_cast<float>(url.endCell - url.startCell) * metrics_.cellW,
+                    std::max(1.0f, dpiScale_), uiTheme_.accent);
+            }
         }
         renderer_->popClip();
         if (leaf->session->exited()) {

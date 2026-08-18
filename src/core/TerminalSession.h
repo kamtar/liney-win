@@ -175,6 +175,11 @@ public:
         const std::wstring& path, std::size_t maximumEntries = 500);
     std::optional<SshDirectoryListing> takeSftpDirectoryResult(
         SshDirectoryRequestId requestId);
+    SshFileOperationRequestId requestSftpFileOperation(
+        SshFileOperationKind kind, const std::wstring& source,
+        const std::wstring& destination = L"");
+    std::optional<SshFileOperationResult> takeSftpFileOperationResult(
+        SshFileOperationRequestId requestId);
     DWORD serialErrorCode() const { return serial_.errorCode(); }
     std::wstring serialErrorMessage() const { return serial_.errorMessage(); }
     // Parse and send exact byte pairs such as "7e 00 ff". This is available

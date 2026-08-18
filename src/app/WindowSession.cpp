@@ -153,7 +153,7 @@ void Window::checkForUpdates(bool quiet) {
     // Query GitHub off the UI thread; renderFrame shows the result + prompt.
     updateThreads_.emplace_back([this, quiet]() {
         const std::string body = httpsGet(
-            L"api.github.com", L"/repos/everettjf/liney-win/releases/latest");
+            L"api.github.com", L"/repos/kamtar/liney-win/releases/latest");
         std::wstring msg, url;
         std::string sha256;
         bool pending = false;

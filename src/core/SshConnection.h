@@ -42,6 +42,20 @@ struct SshDirectoryListing {
 
 using SshDirectoryRequestId = std::uint64_t;
 
+enum class SshFileOperationKind {
+    Copy,
+    Move,
+    Rename,
+    Delete,
+};
+
+struct SshFileOperationResult {
+    bool ok = false;
+    std::wstring error;
+};
+
+using SshFileOperationRequestId = std::uint64_t;
+
 struct SshConnectionCallbacks {
     // Called from the SSH worker thread. The callback must not call back into
     // SshConnection; TerminalSession uses it only to feed the VT parser and
@@ -101,6 +115,15 @@ public:
                                             std::size_t maximumEntries = 500);
     std::optional<SshDirectoryListing> takeDirectoryResult(
         SshDirectoryRequestId requestId);
+
+    // Queues a typed SFTP file operation on the same authenticated session.
+    // `destination` is unused for Delete and is the full destination path for
+    // Copy/Move/Rename. Results are consumed from the UI thread.
+    SshFileOperationRequestId requestFileOperation(
+        SshFileOperationKind kind, const std::wstring& source,
+        const std::wstring& destination = L"");
+    std::optional<SshFileOperationResult> takeFileOperationResult(
+        SshFileOperationRequestId requestId);
 
 private:
     struct Impl;

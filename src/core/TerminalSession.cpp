@@ -304,6 +304,18 @@ std::optional<SshDirectoryListing> TerminalSession::takeSftpDirectoryResult(
     return isSsh() ? ssh_->takeDirectoryResult(requestId) : std::nullopt;
 }
 
+SshFileOperationRequestId TerminalSession::requestSftpFileOperation(
+    SshFileOperationKind kind, const std::wstring& source,
+    const std::wstring& destination) {
+    return isSsh() ? ssh_->requestFileOperation(kind, source, destination) : 0;
+}
+
+std::optional<SshFileOperationResult>
+TerminalSession::takeSftpFileOperationResult(
+    SshFileOperationRequestId requestId) {
+    return isSsh() ? ssh_->takeFileOperationResult(requestId) : std::nullopt;
+}
+
 bool TerminalSession::sendSerialHexInput(const std::wstring& input,
                                          std::wstring* error) {
     if (!isSerial()) {

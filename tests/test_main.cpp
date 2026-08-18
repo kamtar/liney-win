@@ -14,6 +14,7 @@
 #include "app/ResponsiveLayout.h"
 #include "app/BuiltinIcons.h"
 #include "app/Layout.h"
+#include "app/TerminalLinks.h"
 #include "util/Json.h"
 #include "vt/OscParser.h"
 #include "vt/KeyEncoder.h"
@@ -28,6 +29,7 @@
 #include "core/Ai.h"
 #include "core/CommandPalette.h"
 #include "core/PowerShellHistory.h"
+#include "util/Url.h"
 
 namespace {
 
@@ -46,6 +48,32 @@ void testBuiltinIcons() {
           "unknown icon id is rejected");
     check(liney::randomBuiltinIconValue().starts_with(L"builtin:"),
           "random icon persists as a built-in id");
+}
+
+void testUrlDetection() {
+    std::printf("Plain terminal URL detection\n");
+    const auto urls = liney::detectHttpUrls(
+        L"open [http://127.0.0.1:8080]. docs: https://example.com/a?q=1, "
+        L"but nohttps://example.com");
+    check(urls.size() == 2, "detects HTTP and HTTPS URLs with boundaries");
+    if (urls.size() == 2) {
+        check(urls[0].url == L"http://127.0.0.1:8080",
+              "trims sentence punctuation from a local URL");
+        check(urls[1].url == L"https://example.com/a?q=1",
+              "keeps query text while trimming punctuation");
+    }
+
+    liney::Grid grid;
+    const std::wstring line = L"ready https://127.0.0.1:8080/ ";
+    grid.resize(static_cast<int>(line.size()), 1);
+    for (size_t i = 0; i < line.size(); ++i)
+        grid.at(static_cast<int>(i), 0).ch = line[i];
+    const auto hits = liney::detectTerminalUrls(grid, 0);
+    check(hits.size() == 1 && hits[0].startCell == 6,
+          "maps a detected URL back to terminal cells");
+    std::vector<liney::TerminalUrlHit> scratch;
+    check(liney::terminalUrlAt(grid, 0, 10, scratch) != nullptr,
+          "finds the URL under a clicked terminal cell");
 }
 
 void check(bool cond, const char* what) {
@@ -308,7 +336,7 @@ void testUpdatePolicy() {
     check(!liney::versionNewer("v0.6.0", "0.6.0"), "same version rejected");
     std::wstring host, path;
     check(liney::parseTrustedInstallerUrl(
-              L"https://github.com/everettjf/liney-win/releases/download/v0.6.0/liney-setup.exe",
+              L"https://github.com/kamtar/liney-win/releases/download/v0.6.0/liney-setup.exe",
               host, path) && host == L"github.com",
           "official release installer accepted");
     check(!liney::parseTrustedInstallerUrl(
@@ -780,6 +808,7 @@ void testSerialProfiles() {
 
 int main() {
     testBuiltinIcons();
+    testUrlDetection();
     testScheduledShutdown();
     testKeyEncoder();
     testResponsivePanels();

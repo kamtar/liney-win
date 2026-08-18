@@ -1,5 +1,6 @@
 #include "app/Window.h"
 #include "app/WindowInternal.h"
+#include "app/TerminalLinks.h"
 #include "core/RenderSignal.h"
 #include "util/InputBox.h"
 #include "util/Process.h"
@@ -7,10 +8,478 @@
 #include <algorithm>
 #include <cwchar>
 #include <cwctype>
+#include <cstring>
+#include <cstdlib>
 #include <string>
 #include <utility>
 
 namespace liney {
+
+namespace {
+
+std::wstring localFileName(const std::wstring& path) {
+    const size_t slash = path.find_last_of(L"\\/");
+    return slash == std::wstring::npos ? path : path.substr(slash + 1);
+}
+
+std::wstring localParentPath(const std::wstring& path) {
+    size_t end = path.size();
+    while (end > 0 && (path[end - 1] == L'\\' || path[end - 1] == L'/')) --end;
+    const size_t slash = path.find_last_of(L"\\/", end == 0 ? 0 : end - 1);
+    if (slash == std::wstring::npos) return L".";
+    if (slash == 2 && path.size() >= 3 && path[1] == L':')
+        return path.substr(0, 3);
+    return path.substr(0, slash);
+}
+
+std::wstring joinLocalPath(const std::wstring& parent,
+                           const std::wstring& name) {
+    if (parent.empty()) return name;
+    if (parent.back() == L'\\' || parent.back() == L'/') return parent + name;
+    return parent + L"\\" + name;
+}
+
+std::wstring joinRemotePath(const std::wstring& parent,
+                            const std::wstring& name) {
+    if (parent.empty() || parent == L"/") return L"/" + name;
+    return parent.back() == L'/' ? parent + name : parent + L"/" + name;
+}
+
+std::wstring remoteParentPath(const std::wstring& path) {
+    if (path.empty() || path == L"/") return L"/";
+    size_t end = path.size();
+    while (end > 1 && path[end - 1] == L'/') --end;
+    const size_t slash = path.find_last_of(L'/', end - 1);
+    if (slash == std::wstring::npos || slash == 0) return L"/";
+    return path.substr(0, slash);
+}
+
+std::wstring sftpSessionKey(const TerminalSession* session) {
+    if (!session || !session->context().sshProfile) return {};
+    const SshProfile& profile = *session->context().sshProfile;
+    return sshProfileTarget(profile) + L":" + std::to_wstring(profile.port) +
+           L":" + profile.identityFile;
+}
+
+std::wstring win32FileError(const wchar_t* operation) {
+    const DWORD code = GetLastError();
+    wchar_t message[512]{};
+    const DWORD length = FormatMessageW(
+        FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr,
+        code, 0, message, static_cast<DWORD>(_countof(message)), nullptr);
+    std::wstring result = operation;
+    if (length != 0) {
+        result += L": ";
+        result.append(message, length);
+        while (!result.empty() &&
+               (result.back() == L'\r' || result.back() == L'\n'))
+            result.pop_back();
+    }
+    return result;
+}
+
+bool localCopyTree(const std::wstring& source, const std::wstring& destination,
+                   std::wstring& error) {
+    const DWORD attributes = GetFileAttributesW(source.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES) {
+        error = win32FileError(L"Could not read source");
+        return false;
+    }
+    if ((attributes & FILE_ATTRIBUTE_DIRECTORY) == 0) {
+        if (!CopyFileW(source.c_str(), destination.c_str(), TRUE)) {
+            error = win32FileError(L"Could not copy file");
+            return false;
+        }
+        return true;
+    }
+
+    if (!CreateDirectoryW(destination.c_str(), nullptr) &&
+        GetLastError() != ERROR_ALREADY_EXISTS) {
+        error = win32FileError(L"Could not create folder");
+        return false;
+    }
+    WIN32_FIND_DATAW data{};
+    HANDLE handle = FindFirstFileW((source + L"\\*").c_str(), &data);
+    if (handle == INVALID_HANDLE_VALUE) {
+        error = win32FileError(L"Could not enumerate folder");
+        return false;
+    }
+    bool ok = true;
+    do {
+        const std::wstring name = data.cFileName;
+        if (name == L"." || name == L"..") continue;
+        const std::wstring childSource = joinLocalPath(source, name);
+        const std::wstring childDestination = joinLocalPath(destination, name);
+        if (!localCopyTree(childSource, childDestination, error)) {
+            ok = false;
+            break;
+        }
+    } while (FindNextFileW(handle, &data));
+    if (ok && GetLastError() != ERROR_NO_MORE_FILES) {
+        error = win32FileError(L"Could not enumerate folder");
+        ok = false;
+    }
+    FindClose(handle);
+    return ok;
+}
+
+bool localDeletePath(const std::wstring& path, std::wstring& error) {
+    std::wstring paths = path;
+    paths.push_back(L'\0');
+    paths.push_back(L'\0');
+    SHFILEOPSTRUCTW operation{};
+    operation.wFunc = FO_DELETE;
+    operation.pFrom = paths.c_str();
+    operation.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION |
+                       FOF_NOERRORUI | FOF_SILENT;
+    const int result = SHFileOperationW(&operation);
+    if (result != 0 || operation.fAnyOperationsAborted) {
+        error = L"Could not delete the selected path.";
+        return false;
+    }
+    return true;
+}
+
+bool safeFileName(const std::wstring& name) {
+    return !name.empty() && name != L"." && name != L".." &&
+           name.find_first_of(L"\\/:*?\"<>|") == std::wstring::npos;
+}
+
+bool samePath(const std::wstring& left, const std::wstring& right,
+              bool remote) {
+    if (remote) return left == right;
+    return _wcsicmp(left.c_str(), right.c_str()) == 0;
+}
+
+bool pathContains(const std::wstring& parent, const std::wstring& child,
+                  bool remote) {
+    if (samePath(parent, child, remote)) return true;
+    std::wstring prefix = parent;
+    while (prefix.size() > 1 &&
+           (prefix.back() == L'\\' || prefix.back() == L'/')) prefix.pop_back();
+    if (!(remote && prefix == L"/")) prefix += remote ? L"/" : L"\\";
+    if (child.size() < prefix.size()) return false;
+    const std::wstring childPrefix = child.substr(0, prefix.size());
+    if (remote) return childPrefix == prefix;
+    return _wcsicmp(childPrefix.c_str(), prefix.c_str()) == 0;
+}
+
+bool isOpenableTerminalUrl(const std::wstring& url) {
+    std::wstring lower = url;
+    for (wchar_t& c : lower) c = static_cast<wchar_t>(towlower(c));
+    return lower.rfind(L"https://", 0) == 0 ||
+           lower.rfind(L"http://", 0) == 0 ||
+           lower.rfind(L"mailto:", 0) == 0 ||
+           lower.rfind(L"file://", 0) == 0;
+}
+
+bool openTerminalUrl(HWND hwnd, const std::wstring& url) {
+    return reinterpret_cast<INT_PTR>(ShellExecuteW(
+               hwnd, L"open", url.c_str(), nullptr, nullptr, SW_SHOWNORMAL)) >
+           32;
+}
+
+}  // namespace
+
+void Window::invalidateFileList() {
+    listedDir_.clear();
+    remoteListedDir_.clear();
+    remoteListedRequestKey_.clear();
+    remoteFileListedAt_ = 0;
+    remoteFileError_.clear();
+    remoteRetryAt_ = 0;
+    remoteRetryCount_ = 0;
+    fileScrollOffset_ = 0.0f;
+    markRenderDirty();
+}
+
+void Window::activateFileRow(bool isDir, const std::wstring& path) {
+    const TerminalSession* session = activeSession();
+    const bool remote = session && session->isSsh() &&
+        session->context().sshProfile.has_value();
+    if (isDir) {
+        if (remote) remoteBrowsePath_ = path;
+        else browsePath_ = path;
+        fileScrollOffset_ = 0.0f;
+        markRenderDirty();
+        return;
+    }
+    const std::wstring name = localFileName(path);
+    const std::wstring insertion = name.find(L' ') != std::wstring::npos
+        ? L"\"" + name + L"\" " : name + L" ";
+    sendUtf16(insertion.c_str(), insertion.size());
+}
+
+void Window::requestRemoteFileOperation(SshFileOperationKind kind,
+                                         const std::wstring& source,
+                                         const std::wstring& destination,
+                                         const std::wstring& message) {
+    TerminalSession* session = activeSession();
+    if (!session || !session->isSsh() ||
+        !session->context().sshProfile.has_value()) {
+        showToast(L"The active SSH session is not available.", true);
+        return;
+    }
+    if (remoteFileOperationRequestId_ != 0) {
+        showToast(L"An SFTP file operation is already in progress.", true);
+        return;
+    }
+    const SshFileOperationRequestId id = session->requestSftpFileOperation(
+        kind, source, destination);
+    if (id == 0) {
+        showToast(L"The active SFTP session is not available.", true);
+        return;
+    }
+    remoteFileOperationRequestId_ = id;
+    remoteFileOperationSession_ = session;
+    remoteFileOperationSessionKey_ = sftpSessionKey(session);
+    remoteFileOperationMessage_ = message;
+    showToast(message);
+    markRenderDirty();
+}
+
+void Window::pollRemoteFileOperation() {
+    if (remoteFileOperationRequestId_ == 0 || !remoteFileOperationSession_)
+        return;
+    bool stillAlive = false;
+    for (const auto& tab : tabs_) {
+        for (Pane* pane : tab->leaves()) {
+            if (pane && pane->session.get() == remoteFileOperationSession_) {
+                stillAlive = true;
+                break;
+            }
+        }
+        if (stillAlive) break;
+    }
+    if (!stillAlive) {
+        remoteFileOperationRequestId_ = 0;
+        remoteFileOperationSession_ = nullptr;
+        remoteFileOperationSessionKey_.clear();
+        remoteFileOperationMessage_.clear();
+        return;
+    }
+    const auto completed = remoteFileOperationSession_->takeSftpFileOperationResult(
+        remoteFileOperationRequestId_);
+    if (!completed) return;
+    const std::wstring message = remoteFileOperationMessage_;
+    remoteFileOperationRequestId_ = 0;
+    remoteFileOperationSession_ = nullptr;
+    remoteFileOperationSessionKey_.clear();
+    remoteFileOperationMessage_.clear();
+    if (!completed->ok) {
+        showToast(completed->error.empty() ? L"SFTP file operation failed."
+                                          : completed->error,
+                  true);
+        return;
+    }
+    invalidateFileList();
+    showToast(message.empty() ? L"SFTP file operation complete."
+                              : message + L" complete.");
+}
+
+void Window::finishFileDrag(int xi, int yi) {
+    const bool pending = fileDragPending_;
+    const bool active = fileDragActive_;
+    const bool remote = fileDragRemote_;
+    const bool isDir = fileDragIsDir_;
+    const std::wstring source = fileDragPath_;
+    const std::wstring sessionKey = fileDragSessionKey_;
+    fileDragPending_ = false;
+    fileDragActive_ = false;
+    fileDragPath_.clear();
+    fileDragSessionKey_.clear();
+    ReleaseCapture();
+    if (!pending) return;
+
+    if (!active) {
+        activateFileRow(isDir, source);
+        return;
+    }
+
+    Rect leftBar, rightPanel, tabBar, panes;
+    regions(leftBar, rightPanel, tabBar, panes);
+    if (!rightPanel.contains(static_cast<float>(xi), static_cast<float>(yi))) {
+        showToast(L"Drop the item on a folder in the file browser.", true);
+        return;
+    }
+    TerminalSession* session = activeSession();
+    const bool currentRemote = session && session->isSsh() &&
+        session->context().sshProfile.has_value();
+    if (currentRemote != remote ||
+        (remote && sessionKey != remoteSessionKey_)) {
+        showToast(L"The source and destination must use the same file browser.",
+                  true);
+        return;
+    }
+
+    std::wstring destinationDirectory = currentRemote
+        ? remoteBrowsePath_ : browsePath_;
+    for (const SidebarRow& row : sidebarRows_) {
+        if (row.rect.contains(static_cast<float>(xi), static_cast<float>(yi)) &&
+            row.kind == RowKind::FileDir) {
+            destinationDirectory = row.path;
+            break;
+        }
+    }
+    if (destinationDirectory.empty()) {
+        showToast(L"The destination folder is not available.", true);
+        return;
+    }
+    const std::wstring destination = currentRemote
+        ? joinRemotePath(destinationDirectory, localFileName(source))
+        : joinLocalPath(destinationDirectory, localFileName(source));
+    if (pathContains(source, destination, currentRemote)) {
+        showToast(L"A folder cannot be moved into itself.", true);
+        return;
+    }
+    if (samePath(source, destination, currentRemote)) return;
+
+    if (currentRemote) {
+        requestRemoteFileOperation(SshFileOperationKind::Move, source,
+                                   destination, L"Moving remote item…");
+        return;
+    }
+    if (!MoveFileExW(source.c_str(), destination.c_str(),
+                     MOVEFILE_COPY_ALLOWED)) {
+        showToast(win32FileError(L"Could not move item"), true);
+        return;
+    }
+    invalidateFileList();
+    showToast(L"Item moved.");
+}
+
+void Window::openFileMenu(int xi, int yi) {
+    Rect leftBar, rightPanel, tabBar, panes;
+    regions(leftBar, rightPanel, tabBar, panes);
+    if (!filesPanelVisible_ || !rightPanel.contains(static_cast<float>(xi),
+                                                     static_cast<float>(yi)))
+        return;
+
+    TerminalSession* session = activeSession();
+    const bool remote = session && session->isSsh() &&
+        session->context().sshProfile.has_value();
+    std::wstring selectedPath;
+    bool selectedIsDir = false;
+    for (const SidebarRow& row : sidebarRows_) {
+        if (!row.rect.contains(static_cast<float>(xi), static_cast<float>(yi)))
+            continue;
+        if (row.kind == RowKind::FileDir || row.kind == RowKind::FileEntry) {
+            selectedPath = row.path;
+            selectedIsDir = row.kind == RowKind::FileDir;
+        }
+        break;
+    }
+
+    const std::wstring destinationDirectory = selectedIsDir
+        ? selectedPath : (remote ? remoteBrowsePath_ : browsePath_);
+    const bool clipboardMatches = !fileClipboardPath_.empty() &&
+        fileClipboardRemote_ == remote &&
+        (!remote || fileClipboardSessionKey_ == sftpSessionKey(session));
+    const bool canPaste = clipboardMatches && !destinationDirectory.empty();
+
+    HMENU menu = CreatePopupMenu();
+    AppendMenuW(menu, MF_STRING | (selectedPath.empty() ? MF_GRAYED : 0),
+                200, L"Copy");
+    AppendMenuW(menu, MF_STRING | (canPaste ? 0 : MF_GRAYED), 201, L"Paste");
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING | (selectedPath.empty() ? MF_GRAYED : 0),
+                202, L"Rename");
+    AppendMenuW(menu, MF_STRING | (selectedPath.empty() ? MF_GRAYED : 0),
+                203, L"Delete");
+    POINT point{xi, yi};
+    ClientToScreen(hwnd_, &point);
+    const int action = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
+                                      point.x, point.y, 0, hwnd_, nullptr);
+    DestroyMenu(menu);
+    if (action == 0) return;
+
+    if (action == 200) {
+        fileClipboardPath_ = selectedPath;
+        fileClipboardRemote_ = remote;
+        fileClipboardIsDir_ = selectedIsDir;
+        fileClipboardSessionKey_ = remote ? sftpSessionKey(session) : L"";
+        showToast(L"File copied to the Liney file clipboard.");
+        return;
+    }
+
+    if (action == 201 && canPaste) {
+        const std::wstring name = localFileName(fileClipboardPath_);
+        const std::wstring destination = remote
+            ? joinRemotePath(destinationDirectory, name)
+            : joinLocalPath(destinationDirectory, name);
+        if (pathContains(fileClipboardPath_, destination, remote)) {
+            showToast(L"A folder cannot be pasted into itself.", true);
+            return;
+        }
+        if (remote) {
+            requestRemoteFileOperation(SshFileOperationKind::Copy,
+                                       fileClipboardPath_, destination,
+                                       L"Pasting remote item…");
+            return;
+        }
+        if (GetFileAttributesW(destination.c_str()) != INVALID_FILE_ATTRIBUTES) {
+            showToast(L"The destination already contains an item with that name.",
+                      true);
+            return;
+        }
+        std::wstring error;
+        if (!localCopyTree(fileClipboardPath_, destination, error)) {
+            showToast(error.empty() ? L"Could not paste item." : error, true);
+            return;
+        }
+        invalidateFileList();
+        showToast(L"Item pasted.");
+        return;
+    }
+
+    if (selectedPath.empty()) return;
+    if (action == 202) {
+        const std::wstring oldName = localFileName(selectedPath);
+        const std::wstring newName = inputBox(
+            hwnd_, L"Rename", L"New name:", oldName);
+        if (newName.empty() || newName == oldName) return;
+        if (!safeFileName(newName)) {
+            showToast(L"That is not a valid file name.", true);
+            return;
+        }
+        const std::wstring destination = remote
+            ? joinRemotePath(remoteParentPath(selectedPath), newName)
+            : joinLocalPath(localParentPath(selectedPath), newName);
+        if (remote) {
+            requestRemoteFileOperation(SshFileOperationKind::Rename,
+                                       selectedPath, destination,
+                                       L"Renaming remote item…");
+        } else if (!MoveFileExW(selectedPath.c_str(), destination.c_str(),
+                                MOVEFILE_COPY_ALLOWED)) {
+            showToast(win32FileError(L"Could not rename item"), true);
+        } else {
+            invalidateFileList();
+            showToast(L"Item renamed.");
+        }
+        return;
+    }
+
+    if (action == 203) {
+        const std::wstring prompt = L"Delete this item?\n\n" + selectedPath;
+        if (MessageBoxW(hwnd_, prompt.c_str(), L"Delete item",
+                         MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES)
+            return;
+        if (remote) {
+            requestRemoteFileOperation(SshFileOperationKind::Delete,
+                                       selectedPath, L"",
+                                       L"Deleting remote item…");
+        } else {
+            std::wstring error;
+            if (!localDeletePath(selectedPath, error)) {
+                showToast(error.empty() ? L"Could not delete item." : error,
+                          true);
+            } else {
+                invalidateFileList();
+                showToast(L"Item deleted.");
+            }
+        }
+    }
+}
 
 void Window::onMouseDown(int xi, int yi) {
     const float x = static_cast<float>(xi), y = static_cast<float>(yi);
@@ -44,7 +513,27 @@ void Window::onMouseDown(int xi, int yi) {
                     remoteBrowsePath_ = breadcrumb.second;
                 else
                     browsePath_ = breadcrumb.second;
+                fileScrollOffset_ = 0.0f;
+                markRenderDirty();
                 return;
+            }
+            const TerminalSession* session = activeSession();
+            const bool remote = session && session->isSsh() &&
+                session->context().sshProfile.has_value();
+            for (const SidebarRow& row : sidebarRows_) {
+                if (!row.rect.contains(x, y)) continue;
+                if (row.kind == RowKind::FileDir ||
+                    row.kind == RowKind::FileEntry) {
+                    fileDragPending_ = true;
+                    fileDragActive_ = false;
+                    fileDragRemote_ = remote;
+                    fileDragIsDir_ = row.kind == RowKind::FileDir;
+                    fileDragPath_ = row.path;
+                    fileDragSessionKey_ = remote ? sftpSessionKey(session) : L"";
+                    fileDragStart_ = {xi, yi};
+                    SetCapture(hwnd_);
+                    return;
+                }
             }
         }
         for (const SidebarRow& row : sidebarRows_) {
@@ -114,6 +603,8 @@ void Window::onMouseDown(int xi, int yi) {
                     if (remoteBrowsePath_ == L"/") break;
                     if (remoteBrowsePath_.empty() || remoteBrowsePath_ == L".") {
                         remoteBrowsePath_ = L"/";
+                        fileScrollOffset_ = 0.0f;
+                        markRenderDirty();
                         break;
                     }
                     const size_t s = remoteBrowsePath_.find_last_of(L'/');
@@ -128,6 +619,8 @@ void Window::onMouseDown(int xi, int yi) {
                     if (s != std::wstring::npos)
                         browsePath_ = browsePath_.substr(0, s);
                 }
+                fileScrollOffset_ = 0.0f;
+                markRenderDirty();
                 break;
             }
             case RowKind::FileDir:
@@ -234,6 +727,8 @@ void Window::onMouseDown(int xi, int yi) {
                     remoteBrowsePath_ = breadcrumb.second;
                 else
                     browsePath_ = breadcrumb.second;
+                fileScrollOffset_ = 0.0f;
+                markRenderDirty();
                 return;
             }
         }
@@ -265,22 +760,29 @@ void Window::onMouseDown(int xi, int yi) {
         int cx = 0, cy = 0;
         if (!paneCellAt(leaf, xi, yi, cx, cy)) return;
 
-        // OSC 8 links require an intentional Ctrl+click. Terminal output may
-        // not launch arbitrary custom protocols.
-        if (keyDown(VK_CONTROL) && leaf->session) {
-            const std::wstring uri = leaf->session->hyperlinkAt(cx, cy);
-            std::wstring lower = uri;
-            for (wchar_t& ch : lower) ch = static_cast<wchar_t>(towlower(ch));
-            const bool allowed = lower.rfind(L"https://", 0) == 0 ||
-                                 lower.rfind(L"http://", 0) == 0 ||
-                                 lower.rfind(L"mailto:", 0) == 0 ||
-                                 lower.rfind(L"file://", 0) == 0;
-            if (!uri.empty()) {
-                if (allowed)
-                    ShellExecuteW(hwnd_, L"open", uri.c_str(), nullptr, nullptr,
-                                  SW_SHOWNORMAL);
-                else
+        // OSC 8 links and plain HTTP(S) URLs share the same deliberate link
+        // interaction: Ctrl+click opens immediately; a normal click exposes
+        // Copy / Open without accidentally starting terminal selection.
+        std::vector<TerminalUrlHit> urlHits;
+        const TerminalUrlHit* detected = leaf->session
+            ? terminalUrlAt(leaf->session->grid(), cy, cx, urlHits)
+            : nullptr;
+        const std::wstring oscUri = leaf->session
+            ? leaf->session->hyperlinkAt(cx, cy) : L"";
+        const std::wstring uri = oscUri.empty()
+            ? (detected ? detected->url : L"") : oscUri;
+        if (!uri.empty()) {
+            if (keyDown(VK_CONTROL)) {
+                if (isOpenableTerminalUrl(uri)) {
+                    if (!openTerminalUrl(hwnd_, uri))
+                        showToast(L"Could not open link", true);
+                } else {
                     showBalloon(L"Liney", L"Blocked an unsafe hyperlink protocol");
+                }
+                return;
+            }
+            if (detected || isOpenableTerminalUrl(uri)) {
+                openTerminalUrlMenu(uri, xi, yi);
                 return;
             }
         }
@@ -427,6 +929,11 @@ void Window::onMouseDownRight(int xi, int yi) {
             openTabMenu(xi, yi);
             return;
         }
+        return;
+    }
+
+    if (filesPanelVisible_ && rightPanel.contains(x, y)) {
+        openFileMenu(xi, yi);
         return;
     }
 
@@ -714,6 +1221,29 @@ void Window::onMouseMove(int xi, int yi) {
         updatePanelWidthFromPointer(xi);
         return;
     }
+    if (fileDragPending_) {
+        const int dragX = std::abs(xi - fileDragStart_.x);
+        const int dragY = std::abs(yi - fileDragStart_.y);
+        const int threshold = std::max(GetSystemMetrics(SM_CXDRAG),
+                                       GetSystemMetrics(SM_CYDRAG));
+        if (!fileDragActive_ && std::max(dragX, dragY) >= threshold)
+            fileDragActive_ = true;
+        if (fileDragActive_) {
+            Rect leftBar, rightPanel, tabBar, panes;
+            regions(leftBar, rightPanel, tabBar, panes);
+            if (rightPanel.contains(static_cast<float>(xi),
+                                    static_cast<float>(yi))) {
+                if (yi < static_cast<int>(rightPanel.y + metrics_.rowH() * 2))
+                    fileScrollOffset_ = std::max(
+                        0.0f, fileScrollOffset_ - metrics_.rowH());
+                else if (yi > static_cast<int>(rightPanel.bottom() -
+                                                metrics_.rowH() * 2))
+                    fileScrollOffset_ += metrics_.rowH();
+            }
+            markRenderDirty();
+        }
+        return;
+    }
     // Track which tab the pointer is over so its × button shows (and so the ×
     // hover-highlights). Only meaningful while not dragging.
     if (tabDragIndex_ < 0 && !selecting_ && !dragDivider_) {
@@ -777,6 +1307,10 @@ void Window::onMouseUp(int xi, int yi) {
         markRenderDirty();
         return;
     }
+    if (fileDragPending_) {
+        finishFileDrag(xi, yi);
+        return;
+    }
     if (tabDragIndex_ >= 0) {
         tabDragIndex_ = -1;
         ReleaseCapture();
@@ -837,11 +1371,16 @@ bool Window::paneCellAt(const Pane* p, int px, int py, int& cx, int& cy) const {
 }
 
 void Window::clearSelection() {
+    if (fileDragPending_ && GetCapture() == hwnd_) ReleaseCapture();
     selecting_ = false;
     if (selPane_ && selPane_->session) selPane_->session->selectionClear();
     selPane_ = nullptr;
     dragDivider_ = nullptr;
     tabDragIndex_ = -1;
+    fileDragPending_ = false;
+    fileDragActive_ = false;
+    fileDragPath_.clear();
+    fileDragSessionKey_.clear();
 }
 
 bool Window::paneHasSelection() const {
@@ -1034,11 +1573,45 @@ bool Window::updateCursor() {
             SetCursor(LoadCursorW(nullptr, IDC_ARROW));
             return true;
         }
+        if (Tab* t = activeTab()) {
+            if (Pane* leaf = t->hitTest(x, y); leaf && leaf->session) {
+                int cx = 0, cy = 0;
+                if (paneCellAt(leaf, static_cast<int>(x),
+                               static_cast<int>(y), cx, cy)) {
+                    std::vector<TerminalUrlHit> urlHits;
+                    if (!leaf->session->hyperlinkAt(cx, cy).empty() ||
+                        terminalUrlAt(leaf->session->grid(), cy, cx,
+                                      urlHits)) {
+                        SetCursor(LoadCursorW(nullptr, IDC_HAND));
+                        return true;
+                    }
+                }
+            }
+        }
         SetCursor(LoadCursorW(nullptr, IDC_IBEAM));  // over terminal text
         return true;
     }
     SetCursor(LoadCursorW(nullptr, IDC_ARROW));      // chrome
     return true;
+}
+
+void Window::openTerminalUrlMenu(const std::wstring& url, int xi, int yi) {
+    if (url.empty()) return;
+    POINT pt{xi, yi};
+    ClientToScreen(hwnd_, &pt);
+    HMENU menu = CreatePopupMenu();
+    if (!menu) return;
+    AppendMenuW(menu, MF_STRING, 1, L"Copy");
+    AppendMenuW(menu, MF_STRING | (isOpenableTerminalUrl(url) ? 0 : MF_GRAYED),
+                2, L"Open");
+    const int action = TrackPopupMenu(
+        menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd_, nullptr);
+    DestroyMenu(menu);
+    if (action == 1) {
+        setClipboardText(url);
+    } else if (action == 2 && isOpenableTerminalUrl(url)) {
+        if (!openTerminalUrl(hwnd_, url)) showToast(L"Could not open link", true);
+    }
 }
 
 void Window::openPaneMenu(int xi, int yi) {

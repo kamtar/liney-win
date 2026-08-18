@@ -17,6 +17,7 @@ add_executable(liney_tests
   ${CMAKE_CURRENT_SOURCE_DIR}/../src/app/TabStripLayout.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../src/app/ResponsiveLayout.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../src/app/WorkspaceNavigation.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../src/app/TerminalLinks.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../src/app/BuiltinIcons.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../src/vt/OscParser.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../src/vt/KeyEncoder.cpp
@@ -31,7 +32,8 @@ add_executable(liney_tests
   ${CMAKE_CURRENT_SOURCE_DIR}/../src/core/WindowGeometry.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../src/core/Ai.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../src/core/CommandPalette.cpp
-  ${CMAKE_CURRENT_SOURCE_DIR}/../src/util/Json.cpp)
+  ${CMAKE_CURRENT_SOURCE_DIR}/../src/util/Json.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../src/util/Url.cpp)
 target_include_directories(liney_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
 
 enable_testing()

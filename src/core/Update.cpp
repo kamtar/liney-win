@@ -36,7 +36,7 @@ bool versionNewer(const std::string& remote, const std::string& local) {
 bool parseTrustedInstallerUrl(const std::wstring& url, std::wstring& host,
                               std::wstring& path) {
     static constexpr wchar_t prefix[] =
-        L"https://github.com/everettjf/liney-win/releases/download/";
+        L"https://github.com/kamtar/liney-win/releases/download/";
     if (url.rfind(prefix, 0) != 0) return false;
     const size_t pathStart = std::wstring(L"https://github.com").size();
     if (url.size() <= pathStart || url[pathStart] != L'/') return false;

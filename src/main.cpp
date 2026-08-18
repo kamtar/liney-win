@@ -111,7 +111,7 @@ bool runCliIfRequested(int& exitCode) {
         GetEnvironmentVariableW(L"LINEY_UPDATE_TEST_TOKEN", token,
                                 static_cast<DWORD>(_countof(token)));
         const std::string body = liney::httpsGet(
-            L"api.github.com", L"/repos/everettjf/liney-win/releases/latest",
+            L"api.github.com", L"/repos/kamtar/liney-win/releases/latest",
             token);
         bool parsed = false;
         const liney::Json release = liney::Json::parse(body, &parsed);
