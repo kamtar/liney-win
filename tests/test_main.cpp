@@ -340,6 +340,10 @@ void testUpdatePolicy() {
               host, path) && host == L"github.com",
           "official release installer accepted");
     check(!liney::parseTrustedInstallerUrl(
+              L"https://github.com/everettjf/liney-win/releases/download/v0.6.0/liney-setup.exe",
+              host, path),
+          "upstream release installer rejected");
+    check(!liney::parseTrustedInstallerUrl(
               L"https://example.com/liney-setup.exe", host, path),
           "foreign installer host rejected");
     check(!liney::parseTrustedInstallerUrl(
