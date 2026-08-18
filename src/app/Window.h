@@ -205,6 +205,8 @@ private:
     void openFileMenu(int x, int y);
     void activateFileRow(bool isDir, const std::wstring& path);
     void finishFileDrag(int x, int y);
+    bool setWindowsFileClipboard(const std::wstring& path);
+    void startExternalFileDrag(const std::wstring& path);
     void requestRemoteFileOperation(SshFileOperationKind kind,
                                     const std::wstring& source,
                                     const std::wstring& destination,

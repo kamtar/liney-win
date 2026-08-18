@@ -5,13 +5,19 @@
 #include "util/InputBox.h"
 #include "util/Process.h"
 
+#include <ole2.h>
+#include <shlobj.h>
+
 #include <algorithm>
+#include <cstdint>
 #include <cwchar>
 #include <cwctype>
 #include <cstring>
 #include <cstdlib>
+#include <new>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace liney {
 
@@ -123,6 +129,216 @@ bool localCopyTree(const std::wstring& source, const std::wstring& destination,
     return ok;
 }
 
+UINT preferredDropEffectFormat() {
+    static const UINT format = RegisterClipboardFormatW(
+        CFSTR_PREFERREDDROPEFFECT);
+    return format;
+}
+
+HGLOBAL createFileDropHandle(const std::vector<std::wstring>& paths) {
+    if (paths.empty()) return nullptr;
+    size_t chars = 1;  // The final list terminator.
+    for (const std::wstring& path : paths) {
+        if (path.empty() || path.size() > (SIZE_MAX / sizeof(wchar_t)) - chars - 1)
+            return nullptr;
+        chars += path.size() + 1;
+    }
+    if (chars > (SIZE_MAX - sizeof(DROPFILES)) / sizeof(wchar_t))
+        return nullptr;
+    const SIZE_T bytes = sizeof(DROPFILES) + chars * sizeof(wchar_t);
+    HGLOBAL handle = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, bytes);
+    if (!handle) return nullptr;
+    auto* drop = static_cast<DROPFILES*>(GlobalLock(handle));
+    if (!drop) {
+        GlobalFree(handle);
+        return nullptr;
+    }
+    drop->pFiles = sizeof(DROPFILES);
+    drop->fWide = TRUE;
+    wchar_t* destination = reinterpret_cast<wchar_t*>(
+        reinterpret_cast<BYTE*>(drop) + drop->pFiles);
+    for (const std::wstring& path : paths) {
+        memcpy(destination, path.c_str(), path.size() * sizeof(wchar_t));
+        destination += path.size();
+        *destination++ = L'\0';
+    }
+    *destination = L'\0';
+    GlobalUnlock(handle);
+    return handle;
+}
+
+HGLOBAL createPreferredDropEffectHandle() {
+    HGLOBAL handle = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT,
+                                 sizeof(DWORD));
+    if (!handle) return nullptr;
+    auto* effect = static_cast<DWORD*>(GlobalLock(handle));
+    if (!effect) {
+        GlobalFree(handle);
+        return nullptr;
+    }
+    *effect = DROPEFFECT_COPY;
+    GlobalUnlock(handle);
+    return handle;
+}
+
+bool isFileDropFormat(const FORMATETC& format) {
+    return format.cfFormat == CF_HDROP &&
+           (format.tymed & TYMED_HGLOBAL) != 0 &&
+           format.dwAspect == DVASPECT_CONTENT && format.lindex == -1;
+}
+
+bool isPreferredDropEffectFormat(const FORMATETC& format) {
+    return preferredDropEffectFormat() != 0 &&
+           format.cfFormat == preferredDropEffectFormat() &&
+           (format.tymed & TYMED_HGLOBAL) != 0 &&
+           format.dwAspect == DVASPECT_CONTENT && format.lindex == -1;
+}
+
+class FileDataObject final : public IDataObject {
+public:
+    explicit FileDataObject(std::wstring path) : path_(std::move(path)) {}
+
+    STDMETHODIMP QueryInterface(REFIID riid, void** result) override {
+        if (!result) return E_POINTER;
+        *result = nullptr;
+        if (riid == IID_IUnknown || riid == IID_IDataObject)
+            *result = static_cast<IDataObject*>(this);
+        if (!*result) return E_NOINTERFACE;
+        AddRef();
+        return S_OK;
+    }
+
+    STDMETHODIMP_(ULONG) AddRef() override {
+        return static_cast<ULONG>(InterlockedIncrement(&references_));
+    }
+
+    STDMETHODIMP_(ULONG) Release() override {
+        const ULONG references = static_cast<ULONG>(
+            InterlockedDecrement(&references_));
+        if (references == 0) delete this;
+        return references;
+    }
+
+    STDMETHODIMP GetData(FORMATETC* format, STGMEDIUM* medium) override {
+        if (!format || !medium) return E_POINTER;
+        ZeroMemory(medium, sizeof(*medium));
+        if (isFileDropFormat(*format)) {
+            medium->tymed = TYMED_HGLOBAL;
+            medium->hGlobal = createFileDropHandle({path_});
+        } else if (isPreferredDropEffectFormat(*format)) {
+            medium->tymed = TYMED_HGLOBAL;
+            medium->hGlobal = createPreferredDropEffectHandle();
+        } else {
+            return DV_E_FORMATETC;
+        }
+        return medium->hGlobal ? S_OK : E_OUTOFMEMORY;
+    }
+
+    STDMETHODIMP GetDataHere(FORMATETC*, STGMEDIUM*) override {
+        return DATA_E_FORMATETC;
+    }
+
+    STDMETHODIMP QueryGetData(FORMATETC* format) override {
+        if (!format) return E_POINTER;
+        if (isFileDropFormat(*format) || isPreferredDropEffectFormat(*format))
+            return S_OK;
+        if (format->cfFormat == CF_HDROP ||
+            format->cfFormat == preferredDropEffectFormat())
+            return DV_E_TYMED;
+        return DV_E_FORMATETC;
+    }
+
+    STDMETHODIMP GetCanonicalFormatEtc(FORMATETC* source,
+                                       FORMATETC* destination) override {
+        if (!source || !destination) return E_POINTER;
+        *destination = *source;
+        destination->ptd = nullptr;
+        return DATA_S_SAMEFORMATETC;
+    }
+
+    STDMETHODIMP SetData(FORMATETC*, STGMEDIUM*, BOOL) override {
+        return E_NOTIMPL;
+    }
+
+    STDMETHODIMP EnumFormatEtc(DWORD direction,
+                               IEnumFORMATETC** enumerator) override {
+        if (!enumerator) return E_POINTER;
+        *enumerator = nullptr;
+        if (direction != DATADIR_GET) return E_NOTIMPL;
+        FORMATETC formats[2]{};
+        formats[0].cfFormat = CF_HDROP;
+        formats[0].dwAspect = DVASPECT_CONTENT;
+        formats[0].lindex = -1;
+        formats[0].tymed = TYMED_HGLOBAL;
+        UINT count = 1;
+        if (preferredDropEffectFormat() != 0) {
+            formats[count].cfFormat = preferredDropEffectFormat();
+            formats[count].dwAspect = DVASPECT_CONTENT;
+            formats[count].lindex = -1;
+            formats[count].tymed = TYMED_HGLOBAL;
+            ++count;
+        }
+        return SHCreateStdEnumFmtEtc(count, formats, enumerator);
+    }
+
+    STDMETHODIMP DAdvise(FORMATETC*, DWORD, IAdviseSink*, DWORD*) override {
+        return OLE_E_ADVISENOTSUPPORTED;
+    }
+
+    STDMETHODIMP DUnadvise(DWORD) override { return OLE_E_ADVISENOTSUPPORTED; }
+
+    STDMETHODIMP EnumDAdvise(IEnumSTATDATA** enumerator) override {
+        if (enumerator) *enumerator = nullptr;
+        return OLE_E_ADVISENOTSUPPORTED;
+    }
+
+private:
+    ~FileDataObject() = default;
+
+    LONG references_ = 1;
+    std::wstring path_;
+};
+
+class FileDropSource final : public IDropSource {
+public:
+    STDMETHODIMP QueryInterface(REFIID riid, void** result) override {
+        if (!result) return E_POINTER;
+        *result = nullptr;
+        if (riid == IID_IUnknown || riid == IID_IDropSource)
+            *result = static_cast<IDropSource*>(this);
+        if (!*result) return E_NOINTERFACE;
+        AddRef();
+        return S_OK;
+    }
+
+    STDMETHODIMP_(ULONG) AddRef() override {
+        return static_cast<ULONG>(InterlockedIncrement(&references_));
+    }
+
+    STDMETHODIMP_(ULONG) Release() override {
+        const ULONG references = static_cast<ULONG>(
+            InterlockedDecrement(&references_));
+        if (references == 0) delete this;
+        return references;
+    }
+
+    STDMETHODIMP QueryContinueDrag(BOOL escapePressed,
+                                   DWORD keyState) override {
+        if (escapePressed) return DRAGDROP_S_CANCEL;
+        if ((keyState & MK_LBUTTON) == 0) return DRAGDROP_S_DROP;
+        return S_OK;
+    }
+
+    STDMETHODIMP GiveFeedback(DWORD) override {
+        return DRAGDROP_S_USEDEFAULTCURSORS;
+    }
+
+private:
+    ~FileDropSource() = default;
+
+    LONG references_ = 1;
+};
+
 bool localDeletePath(const std::wstring& path, std::wstring& error) {
     std::wstring paths = path;
     paths.push_back(L'\0');
@@ -180,6 +396,59 @@ bool openTerminalUrl(HWND hwnd, const std::wstring& url) {
 }
 
 }  // namespace
+
+bool Window::setWindowsFileClipboard(const std::wstring& path) {
+    HGLOBAL drop = createFileDropHandle({path});
+    if (!drop) return false;
+    HGLOBAL preferredEffect = createPreferredDropEffectHandle();
+    if (!OpenClipboard(hwnd_)) {
+        GlobalFree(drop);
+        if (preferredEffect) GlobalFree(preferredEffect);
+        return false;
+    }
+    bool copied = false;
+    if (EmptyClipboard()) {
+        copied = SetClipboardData(CF_HDROP, drop) != nullptr;
+        if (!copied) {
+            GlobalFree(drop);
+        } else if (preferredEffect &&
+                   SetClipboardData(preferredDropEffectFormat(),
+                                    preferredEffect) == nullptr) {
+            GlobalFree(preferredEffect);
+        }
+    } else {
+        GlobalFree(drop);
+        if (preferredEffect) GlobalFree(preferredEffect);
+    }
+    CloseClipboard();
+    return copied;
+}
+
+void Window::startExternalFileDrag(const std::wstring& path) {
+    if (path.empty() ||
+        GetFileAttributesW(path.c_str()) == INVALID_FILE_ATTRIBUTES) {
+        showToast(L"The selected item is no longer available.", true);
+        return;
+    }
+
+    auto* data = new (std::nothrow) FileDataObject(path);
+    auto* source = new (std::nothrow) FileDropSource();
+    if (!data || !source) {
+        if (data) data->Release();
+        if (source) source->Release();
+        showToast(L"Could not start the Windows file drag.", true);
+        return;
+    }
+
+    DWORD effect = DROPEFFECT_NONE;
+    const HRESULT result = DoDragDrop(data, source, DROPEFFECT_COPY, &effect);
+    source->Release();
+    data->Release();
+    if (FAILED(result) && result != DRAGDROP_S_CANCEL) {
+        showToast(L"Could not start the Windows file drag.", true);
+    }
+    markRenderDirty();
+}
 
 void Window::invalidateFileList() {
     listedDir_.clear();
@@ -398,7 +667,13 @@ void Window::openFileMenu(int xi, int yi) {
         fileClipboardRemote_ = remote;
         fileClipboardIsDir_ = selectedIsDir;
         fileClipboardSessionKey_ = remote ? sftpSessionKey(session) : L"";
-        showToast(L"File copied to the Liney file clipboard.");
+        if (!remote && !setWindowsFileClipboard(selectedPath)) {
+            showToast(L"File copied to Liney, but Windows clipboard access is busy.",
+                      true);
+        } else {
+            showToast(remote ? L"File copied to the Liney file clipboard."
+                             : L"File copied to the Windows clipboard.");
+        }
         return;
     }
 
@@ -1265,6 +1540,18 @@ void Window::onMouseMove(int xi, int yi) {
         if (fileDragActive_) {
             Rect leftBar, rightPanel, tabBar, panes;
             regions(leftBar, rightPanel, tabBar, panes);
+            if (!fileDragRemote_ &&
+                !rightPanel.contains(static_cast<float>(xi),
+                                     static_cast<float>(yi))) {
+                const std::wstring path = fileDragPath_;
+                fileDragPending_ = false;
+                fileDragActive_ = false;
+                fileDragPath_.clear();
+                fileDragSessionKey_.clear();
+                ReleaseCapture();
+                startExternalFileDrag(path);
+                return;
+            }
             if (rightPanel.contains(static_cast<float>(xi),
                                     static_cast<float>(yi))) {
                 if (yi < static_cast<int>(rightPanel.y + metrics_.rowH() * 2))
