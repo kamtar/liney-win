@@ -52,6 +52,7 @@ private:
     void addWorkspaceFolder();       // pick a folder, add as a project, persist
     void addWorkspaceSsh();          // prompt for an SSH host, add and connect
     void addWorkspaceSerial();       // prompt for a serial port, add and connect
+    void openWorkspaceAddMenu(int x, int y);
     void editWorkspaceSsh(int index);
     void removeWorkspaceSsh(int index);
     void editWorkspaceSerial(int index);
@@ -377,7 +378,6 @@ private:
         int repo = -1;
         int worktree = -1;
         std::wstring path;  // for file rows
-        Rect actionRect;  // archive/unarchive button for project rows
         bool archived = false;
     };
     std::vector<SidebarRow> sidebarRows_;
@@ -385,7 +385,8 @@ private:
     std::vector<Rect> tabCloseRects_;  // per-tab × button hit rects
     int hoverTab_ = -1;        // tab under the pointer (-1 = none); shows its ×
     int lastMouseX_ = -1, lastMouseY_ = -1;  // client-space pointer, for hover
-    Rect workspaceAddRect_{};  // the WORKSPACE "+" (add project) button
+    Rect workspaceAddRect_{};  // the WORKSPACE split add control
+    Rect workspaceAddMenuRect_{};  // split-button arrow opens the add menu
     Rect sshHeaderRect_{};
     bool sshExpanded_ = true;
     Rect archiveHeaderRect_{};

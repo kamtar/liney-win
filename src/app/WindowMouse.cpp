@@ -780,7 +780,10 @@ void Window::onMouseDown(int xi, int yi) {
     if ((sidebarVisible_ && leftBar.contains(x, y)) ||
         (filesPanelVisible_ && rightPanel.contains(x, y))) {
         if (sidebarVisible_ && workspaceAddRect_.contains(x, y)) {
-            addWorkspaceFolder();
+            if (workspaceAddMenuRect_.contains(x, y))
+                openWorkspaceAddMenu(xi, yi);
+            else
+                addWorkspaceFolder();
             return;
         }
         if (filesPanelVisible_ && rightPanel.contains(x, y)) {
@@ -847,13 +850,6 @@ void Window::onMouseDown(int xi, int yi) {
             if (row.kind == RowKind::SshHeader) {
                 sshExpanded_ = !sshExpanded_;
                 markRenderDirty();
-                return;
-            }
-            if (row.kind == RowKind::RepoHeader &&
-                row.actionRect.contains(x, y)) {
-                auto& repos = workspace_.repos();
-                if (row.repo >= 0 && row.repo < static_cast<int>(repos.size()))
-                    toggleProjectArchive(repos[row.repo]);
                 return;
             }
             if (row.kind == RowKind::RecentProject) {
@@ -1190,28 +1186,32 @@ void Window::onMouseDoubleClick(int xi, int yi) {
     lastClickCY_ = cy;
 }
 
+void Window::openWorkspaceAddMenu(int xi, int yi) {
+    POINT point{xi, yi};
+    ClientToScreen(hwnd_, &point);
+    HMENU menu = CreatePopupMenu();
+    AppendMenuW(menu, MF_STRING, 60, L"SSH");
+    AppendMenuW(menu, MF_STRING, 61, L"Serial");
+    AppendMenuW(menu, MF_STRING, 62, L"Folder");
+    const int action = TrackPopupMenu(
+        menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, point.x, point.y, 0,
+        hwnd_, nullptr);
+    DestroyMenu(menu);
+    if (action == 60) addWorkspaceSsh();
+    else if (action == 61) addWorkspaceSerial();
+    else if (action == 62) addWorkspaceFolder();
+}
+
 void Window::onMouseDownRight(int xi, int yi) {
     const float x = static_cast<float>(xi), y = static_cast<float>(yi);
     Rect leftBar, rightPanel, tabBar, panes;
     regions(leftBar, rightPanel, tabBar, panes);
 
-    // The workspace + keeps its normal left-click behavior (add a folder),
-    // while its context menu exposes the other kinds of terminal entry.
+    // The workspace add control keeps its normal left-click behavior, while
+    // the arrow and context menu expose the other kinds of terminal entry.
     if (sidebarVisible_ && leftBar.contains(x, y) &&
         workspaceAddRect_.contains(x, y)) {
-        POINT point{xi, yi};
-        ClientToScreen(hwnd_, &point);
-        HMENU menu = CreatePopupMenu();
-        AppendMenuW(menu, MF_STRING, 60, L"SSH");
-        AppendMenuW(menu, MF_STRING, 61, L"Serial");
-        AppendMenuW(menu, MF_STRING, 62, L"Folder");
-        const int action = TrackPopupMenu(
-            menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, point.x, point.y, 0,
-            hwnd_, nullptr);
-        DestroyMenu(menu);
-        if (action == 60) addWorkspaceSsh();
-        else if (action == 61) addWorkspaceSerial();
-        else if (action == 62) addWorkspaceFolder();
+        openWorkspaceAddMenu(xi, yi);
         return;
     }
 

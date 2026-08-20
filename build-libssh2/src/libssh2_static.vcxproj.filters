@@ -1,0 +1,162 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <ClCompile Include="C:\Work\personal\liney-win\third_party\libssh2\src\agent.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Work\personal\liney-win\third_party\libssh2\src\bcrypt_pbkdf.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Work\personal\liney-win\third_party\libssh2\src\channel.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Work\personal\liney-win\third_party\libssh2\src\comp.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Work\personal\liney-win\third_party\libssh2\src\chacha.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Work\personal\liney-win\third_party\libssh2\src\cipher-chachapoly.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Work\personal\liney-win\third_party\libssh2\src\crypt.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Work\personal\liney-win\third_party\libssh2\src\crypto.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Work\personal\liney-win\third_party\libssh2\src\global.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Work\personal\liney-win\third_party\libssh2\src\hostkey.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Work\personal\liney-win\third_party\libssh2\src\keepalive.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Work\personal\liney-win\third_party\libssh2\src\kex.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Work\personal\liney-win\third_party\libssh2\src\knownhost.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Work\personal\liney-win\third_party\libssh2\src\mac.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Work\personal\liney-win\third_party\libssh2\src\misc.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Work\personal\liney-win\third_party\libssh2\src\packet.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Work\personal\liney-win\third_party\libssh2\src\pem.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Work\personal\liney-win\third_party\libssh2\src\poly1305.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Work\personal\liney-win\third_party\libssh2\src\publickey.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Work\personal\liney-win\third_party\libssh2\src\scp.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Work\personal\liney-win\third_party\libssh2\src\session.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Work\personal\liney-win\third_party\libssh2\src\sftp.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Work\personal\liney-win\third_party\libssh2\src\transport.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Work\personal\liney-win\third_party\libssh2\src\userauth.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Work\personal\liney-win\third_party\libssh2\src\userauth_kbd_packet.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Work\personal\liney-win\third_party\libssh2\src\version.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="C:\Work\personal\liney-win\third_party\libssh2\src\chacha.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Work\personal\liney-win\third_party\libssh2\src\channel.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Work\personal\liney-win\third_party\libssh2\src\cipher-chachapoly.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Work\personal\liney-win\third_party\libssh2\src\comp.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Work\personal\liney-win\third_party\libssh2\src\crypto.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Work\personal\liney-win\third_party\libssh2\src\crypto_config.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Work\personal\liney-win\third_party\libssh2\src\libgcrypt.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Work\personal\liney-win\third_party\libssh2\src\libssh2_priv.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Work\personal\liney-win\third_party\libssh2\src\libssh2_setup.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Work\personal\liney-win\third_party\libssh2\src\mac.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Work\personal\liney-win\third_party\libssh2\src\mbedtls.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Work\personal\liney-win\third_party\libssh2\src\misc.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Work\personal\liney-win\third_party\libssh2\src\openssl.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Work\personal\liney-win\third_party\libssh2\src\os400qc3.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Work\personal\liney-win\third_party\libssh2\src\packet.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Work\personal\liney-win\third_party\libssh2\src\poly1305.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Work\personal\liney-win\third_party\libssh2\src\session.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Work\personal\liney-win\third_party\libssh2\src\sftp.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Work\personal\liney-win\third_party\libssh2\src\transport.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Work\personal\liney-win\third_party\libssh2\src\userauth.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Work\personal\liney-win\third_party\libssh2\src\userauth_kbd_packet.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Work\personal\liney-win\third_party\libssh2\src\wincng.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="C:\Work\personal\liney-win\third_party\libssh2\src\CMakeLists.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="Header Files">
+      <UniqueIdentifier>{ACCCB437-D955-39A7-903E-F004C00C078C}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{254FA845-C59D-3B83-9A62-E3038739211D}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>

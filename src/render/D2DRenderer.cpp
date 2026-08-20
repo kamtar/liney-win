@@ -709,16 +709,6 @@ void D2DRenderer::drawIcon(IconKind kind, float x, float y, float size,
         for (int i = 0; i < 3; ++i)
             dot(bx + s * (0.20f + 0.30f * i), cy, s * 0.09f);
         break;
-    case IconKind::Archive:  // compact archive tray, matching the sidebar control
-        dc->DrawRoundedRectangle(
-            D2D1::RoundedRect(
-                D2D1::RectF(bx + s * 0.14f, by + s * 0.18f,
-                            bx + s * 0.86f, by + s * 0.82f),
-                s * 0.08f, s * 0.08f),
-            br, t);
-        line(bx + s * 0.29f, by + s * 0.47f,
-             bx + s * 0.71f, by + s * 0.47f);
-        break;
     }
 }
 

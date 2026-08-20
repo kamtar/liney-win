@@ -10,7 +10,7 @@ namespace liney {
 // item glyphs and the top-right toolbar.
 enum class IconKind {
     Folder, File, Branch, Globe, Spark, Power, Settings, Download, Up, Coffee,
-    Menu, Archive
+    Menu
 };
 
 // Renderer abstraction.

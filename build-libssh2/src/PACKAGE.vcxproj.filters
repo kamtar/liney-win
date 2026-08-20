@@ -1,0 +1,13 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <CustomBuild Include="C:\Work\personal\liney-win\build-libssh2\CMakeFiles\cd7dff970a3808745eef1a462395a1b7\PACKAGE_force.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="CMake Rules">
+      <UniqueIdentifier>{444BCC40-7365-3FC2-BE2E-3E259DD58CB6}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>

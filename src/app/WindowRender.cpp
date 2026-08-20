@@ -107,24 +107,71 @@ void Window::drawLeftSidebar(const Rect& r) {
                             false);
     };
 
-    const float workspaceAddW = rowH;
+    auto collapsibleHeader = [&](const wchar_t* txt, bool expanded,
+                                 size_t count, const Color& labelColor,
+                                 const Color& arrowColor, Rect& hitRect) {
+        hitRect = {r.x, y, r.w, rowH};
+        rowBackground(hitRect);
+        renderer_->drawText(expanded ? L"v" : L">", r.x + pad,
+                            y + tDY, metrics_.cellW * 1.5f, th,
+                            arrowColor, true);
+        const float labelX = r.x + pad + metrics_.cellW * 1.5f;
+        const float countW = metrics_.cellW * 4.0f;
+        const float countX = r.right() - pad - countW;
+        renderer_->drawText(txt, labelX, y + tDY,
+                            std::max(1.0f, countX - labelX), th,
+                            labelColor, true);
+        renderer_->drawText(L"(" + std::to_wstring(count) + L")", countX,
+                            y + tDY, countW, th, uiTheme_.dim, true);
+        const float lineX = labelX + metrics_.cellW *
+            (static_cast<float>(std::wstring(txt).size()) + 2.0f);
+        const float lineRight = countX - metrics_.cellW * 0.75f;
+        if (lineX < lineRight)
+            renderer_->fillRect(lineX, y + rowH * 0.5f,
+                                lineRight - lineX, 1.0f, uiTheme_.border);
+    };
+
+    const float workspaceAddW = rowH * 1.65f;
     const float workspaceAddX =
         r.x + r.w - workspaceAddW - pad * 0.5f;
     header(L"WORKSPACE", workspaceAddX - 6.0f * dpiScale_);
-    // "+" add-project button at the right of the header row.
+    // Split add control: the plus keeps the fast folder action, while the
+    // arrow makes the alternate SSH / Serial / Folder actions discoverable.
     {
         const float bw = workspaceAddW;
         const float bx = workspaceAddX;
         workspaceAddRect_ = { bx, y, bw, rowH };
-        if (hot(workspaceAddRect_))
+        const float menuW = rowH * 0.62f;
+        workspaceAddMenuRect_ = { bx + bw - menuW, y, menuW, rowH };
+        const float outlineInset = 2.0f * dpiScale_;
+        const float outlineRadius = std::min(
+            5.0f * dpiScale_, (rowH - outlineInset * 2.0f) * 0.25f);
+        const bool addHot = hot(workspaceAddRect_);
+        if (addHot)
             renderer_->fillRoundedRect(
-                bx + 4.0f, y + 3.0f, bw - 8.0f, rowH - 6.0f,
-                std::min(6.0f * dpiScale_, rowH * 0.22f),
-                uiTheme_.tabActiveBg);
+                bx + outlineInset + 1.0f, y + outlineInset + 1.0f,
+                bw - (outlineInset + 1.0f) * 2.0f,
+                rowH - (outlineInset + 1.0f) * 2.0f,
+                outlineRadius, uiTheme_.tabActiveBg);
+        renderer_->strokeRoundedRect(
+            bx + outlineInset, y + outlineInset,
+            bw - outlineInset * 2.0f, rowH - outlineInset * 2.0f,
+            outlineRadius, addHot ? uiTheme_.accent : uiTheme_.border,
+            std::max(1.0f, dpiScale_));
+        renderer_->fillRect(workspaceAddMenuRect_.x,
+                            y + outlineInset + rowH * 0.18f, 1.0f,
+                            rowH - (outlineInset + rowH * 0.18f) * 2.0f,
+                            addHot ? uiTheme_.accent : uiTheme_.border);
+        const bool menuHot = hot(workspaceAddMenuRect_);
+        const float glyphY = y - 0.5f * dpiScale_;
         renderer_->drawTextCentered(
-            L"+", workspaceAddRect_.x, workspaceAddRect_.y,
-            workspaceAddRect_.w, workspaceAddRect_.h,
-            hot(workspaceAddRect_) ? uiTheme_.text : uiTheme_.accent, true);
+            L"+", workspaceAddRect_.x, glyphY,
+            bw - menuW, workspaceAddRect_.h,
+            addHot ? uiTheme_.text : uiTheme_.accent, true);
+        renderer_->drawTextCentered(
+            L"v", workspaceAddMenuRect_.x, glyphY,
+            workspaceAddMenuRect_.w, workspaceAddMenuRect_.h,
+            menuHot ? uiTheme_.text : uiTheme_.accent, true);
     }
     y += rowH + 4.0f;
 
@@ -168,7 +215,6 @@ void Window::drawLeftSidebar(const Rect& r) {
         if (y > r.bottom()) return false;
         Repo& repo = repos[i];
         const Rect repoRow{ r.x, y, r.w, rowH };
-        const Rect archiveRect{ r.right() - pad - rowH, y, rowH, rowH };
         const Color projectColor = archived ? kArchivedProjectColor
                                             : projectColorForPath(repo.path);
         const bool projectSelected =
@@ -207,28 +253,10 @@ void Window::drawLeftSidebar(const Rect& r) {
             });
         const std::wstring repoLabel = favorite ? L"★  " + repo.name : repo.name;
         renderer_->drawText(repoLabel, nameX, y + tDY,
-                            std::max(1.0f, archiveRect.x - nameX - 4.0f), th,
+                            std::max(1.0f, r.right() - pad - nameX), th,
                             archived ? kArchivedProjectColor : uiTheme_.text,
                             true);
-        const bool actionHot = archiveRect.contains(
-            static_cast<float>(lastMouseX_), static_cast<float>(lastMouseY_));
-        if (actionHot)
-            renderer_->fillRoundedRect(
-                archiveRect.x + 4.0f, archiveRect.y + 3.0f,
-                archiveRect.w - 8.0f, archiveRect.h - 6.0f,
-                std::min(6.0f * dpiScale_, rowH * 0.22f), uiTheme_.tabActiveBg);
-        if (archived) {
-            renderer_->drawIcon(IconKind::Up, archiveRect.x + rowH * 0.12f,
-                                archiveRect.y + rowH * 0.12f, rowH * 0.76f,
-                                actionHot ? uiTheme_.text : kNeutralUiColor);
-        } else {
-            renderer_->drawIcon(IconKind::Archive,
-                                archiveRect.x + rowH * 0.12f,
-                                archiveRect.y + rowH * 0.12f, rowH * 0.76f,
-                                actionHot ? uiTheme_.text : kNeutralUiColor);
-        }
         SidebarRow projectRow{repoRow, RowKind::RepoHeader, i, -1, L""};
-        projectRow.actionRect = archiveRect;
         projectRow.archived = archived;
         sidebarRows_.push_back(std::move(projectRow));
         y += rowH;
@@ -261,22 +289,11 @@ void Window::drawLeftSidebar(const Rect& r) {
     for (int i = 0; i < static_cast<int>(repos.size()); ++i)
         if (!isProjectArchived(repos[i].path) && !drawRepo(i, false)) break;
 
-    // ---- SSH: configured hosts; same collapsible category behavior as Serial.
+    // ---- SSH: a Workspace-style collapsible section.
     if (!sshHosts_.empty() && y <= r.bottom()) {
         y += metrics_.sectionGap();
-        sshHeaderRect_ = {r.x, y, r.w, rowH};
-        rowBackground(sshHeaderRect_);
-        renderer_->drawText(sshExpanded_ ? L"v" : L">", r.x + pad,
-                            y + tDY, metrics_.cellW * 1.5f, th,
-                            uiTheme_.accent, true);
-        const float headerX = r.x + pad + metrics_.cellW * 1.5f;
-        renderer_->drawText(L"SSH", headerX, y + tDY,
-                            r.right() - headerX - pad, th,
-                            uiTheme_.sidebarHdr, true);
-        renderer_->drawText(L"(" + std::to_wstring(sshHosts_.size()) + L")",
-                            r.right() - pad - metrics_.cellW * 4.0f,
-                            y + tDY, metrics_.cellW * 4.0f, th,
-                            uiTheme_.dim, true);
+        collapsibleHeader(L"SSH", sshExpanded_, sshHosts_.size(),
+                          uiTheme_.sidebarHdr, uiTheme_.accent, sshHeaderRect_);
         sidebarRows_.push_back({sshHeaderRect_, RowKind::SshHeader,
                                 -1, -1, L""});
         y += rowH + 4.0f;
@@ -293,22 +310,11 @@ void Window::drawLeftSidebar(const Rect& r) {
         }
     }
 
-    // ---- SERIAL: configured COM ports; the category is collapsible ---------
+    // ---- SERIAL: a Workspace-style collapsible section.
     if (!serialPorts_.empty() && y <= r.bottom()) {
         y += metrics_.sectionGap();
-        serialHeaderRect_ = {r.x, y, r.w, rowH};
-        rowBackground(serialHeaderRect_);
-        renderer_->drawText(serialExpanded_ ? L"v" : L">", r.x + pad,
-                            y + tDY, metrics_.cellW * 1.5f, th,
-                            uiTheme_.accent, true);
-        const float headerX = r.x + pad + metrics_.cellW * 1.5f;
-        renderer_->drawText(L"SERIAL", headerX, y + tDY,
-                            r.right() - headerX - pad, th,
-                            uiTheme_.sidebarHdr, true);
-        renderer_->drawText(L"(" + std::to_wstring(serialPorts_.size()) + L")",
-                            r.right() - pad - metrics_.cellW * 4.0f,
-                            y + tDY, metrics_.cellW * 4.0f, th,
-                            uiTheme_.dim, true);
+        collapsibleHeader(L"SERIAL", serialExpanded_, serialPorts_.size(),
+                          uiTheme_.sidebarHdr, uiTheme_.accent, serialHeaderRect_);
         sidebarRows_.push_back({serialHeaderRect_, RowKind::SerialHeader,
                                 -1, -1, L""});
         y += rowH + 4.0f;
@@ -373,19 +379,10 @@ void Window::drawLeftSidebar(const Rect& r) {
     const int archivedCount = static_cast<int>(repos.size()) - activeRepoCount;
     if (archivedCount > 0 && y <= r.bottom()) {
         y += metrics_.sectionGap();
-        archiveHeaderRect_ = {r.x, y, r.w, rowH};
-        rowBackground(archiveHeaderRect_);
-        renderer_->drawText(archiveExpanded_ ? L"v" : L">", r.x + pad,
-                            y + tDY, metrics_.cellW * 1.5f, th,
-                            kArchivedProjectColor, true);
-        const float headerX = r.x + pad + metrics_.cellW * 1.5f;
-        renderer_->drawText(L"ARCHIVE", headerX, y + tDY,
-                            r.right() - headerX - pad, th,
-                            kArchivedProjectColor, true);
-        renderer_->drawText(L"(" + std::to_wstring(archivedCount) + L")",
-                            r.right() - pad - metrics_.cellW * 4.0f, y + tDY,
-                            metrics_.cellW * 4.0f, th, kArchivedProjectColor,
-                            true);
+        collapsibleHeader(L"ARCHIVE", archiveExpanded_,
+                          static_cast<size_t>(archivedCount),
+                          kArchivedProjectColor, kArchivedProjectColor,
+                          archiveHeaderRect_);
         sidebarRows_.push_back({archiveHeaderRect_, RowKind::ArchiveHeader,
                                 -1, -1, L""});
         y += rowH + 4.0f;

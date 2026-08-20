@@ -1,0 +1,344 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <PreferredToolArchitecture>x64</PreferredToolArchitecture>
+  </PropertyGroup>
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="MinSizeRel|x64">
+      <Configuration>MinSizeRel</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="RelWithDebInfo|x64">
+      <Configuration>RelWithDebInfo</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{B2E14157-64FE-3339-B9CF-995984E4EC35}</ProjectGuid>
+    <Keyword>Win32Proj</Keyword>
+    <WindowsTargetPlatformVersion>10.0.26100.0</WindowsTargetPlatformVersion>
+    <Platform>x64</Platform>
+    <ProjectName>libssh2_static</ProjectName>
+    <VCProjectUpgraderObjectName>NoUpgrade</VCProjectUpgraderObjectName>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>StaticLibrary</ConfigurationType>
+    <CharacterSet>MultiByte</CharacterSet>
+    <PlatformToolset>v143</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>StaticLibrary</ConfigurationType>
+    <CharacterSet>MultiByte</CharacterSet>
+    <PlatformToolset>v143</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'" Label="Configuration">
+    <ConfigurationType>StaticLibrary</ConfigurationType>
+    <CharacterSet>MultiByte</CharacterSet>
+    <PlatformToolset>v143</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'" Label="Configuration">
+    <ConfigurationType>StaticLibrary</ConfigurationType>
+    <CharacterSet>MultiByte</CharacterSet>
+    <PlatformToolset>v143</PlatformToolset>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings">
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup>
+    <_ProjectFileVersion>10.0.20506.1</_ProjectFileVersion>
+    <OutDir Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:\Work\personal\liney-win\build-libssh2\src\Debug\</OutDir>
+    <IntDir Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">libssh2_static.dir\Debug\</IntDir>
+    <TargetName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">libssh2</TargetName>
+    <TargetExt Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">.lib</TargetExt>
+    <OutDir Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:\Work\personal\liney-win\build-libssh2\src\Release\</OutDir>
+    <IntDir Condition="'$(Configuration)|$(Platform)'=='Release|x64'">libssh2_static.dir\Release\</IntDir>
+    <TargetName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">libssh2</TargetName>
+    <TargetExt Condition="'$(Configuration)|$(Platform)'=='Release|x64'">.lib</TargetExt>
+    <OutDir Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:\Work\personal\liney-win\build-libssh2\src\MinSizeRel\</OutDir>
+    <IntDir Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">libssh2_static.dir\MinSizeRel\</IntDir>
+    <TargetName Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">libssh2</TargetName>
+    <TargetExt Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">.lib</TargetExt>
+    <OutDir Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:\Work\personal\liney-win\build-libssh2\src\RelWithDebInfo\</OutDir>
+    <IntDir Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">libssh2_static.dir\RelWithDebInfo\</IntDir>
+    <TargetName Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">libssh2</TargetName>
+    <TargetExt Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">.lib</TargetExt>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>C:\Work\personal\liney-win\third_party\libssh2\include;C:\Work\personal\liney-win\build-libssh2\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AssemblerListingLocation>$(IntDir)</AssemblerListingLocation>
+      <BasicRuntimeChecks>EnableFastChecks</BasicRuntimeChecks>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <ExceptionHandling>
+      </ExceptionHandling>
+      <InlineFunctionExpansion>Disabled</InlineFunctionExpansion>
+      <MinimalRebuild></MinimalRebuild>
+      <Optimization>Disabled</Optimization>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
+      <SupportJustMyCode></SupportJustMyCode>
+      <UseFullPaths>false</UseFullPaths>
+      <WarningLevel>Level4</WarningLevel>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;LIBSSH2_WINCNG;HAVE_CONFIG_H;LIBSSH2_ECDSA_WINCNG;CMAKE_INTDIR="Debug"</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)</ObjectFileName>
+      <ScanSourceForModuleDependencies>false</ScanSourceForModuleDependencies>
+    </ClCompile>
+    <ResourceCompile>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_DEBUG;_WINDOWS;LIBSSH2_WINCNG;HAVE_CONFIG_H;LIBSSH2_ECDSA_WINCNG;CMAKE_INTDIR=\"Debug\"</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>C:\Work\personal\liney-win\third_party\libssh2\include;C:\Work\personal\liney-win\build-libssh2\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ResourceCompile>
+    <Midl>
+      <AdditionalIncludeDirectories>C:\Work\personal\liney-win\third_party\libssh2\include;C:\Work\personal\liney-win\build-libssh2\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
+      <HeaderFileName>%(Filename).h</HeaderFileName>
+      <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
+      <InterfaceIdentifierFileName>%(Filename)_i.c</InterfaceIdentifierFileName>
+      <ProxyFileName>%(Filename)_p.c</ProxyFileName>
+    </Midl>
+    <Lib>
+      <AdditionalOptions>%(AdditionalOptions) /machine:x64</AdditionalOptions>
+    </Lib>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>C:\Work\personal\liney-win\third_party\libssh2\include;C:\Work\personal\liney-win\build-libssh2\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AssemblerListingLocation>$(IntDir)</AssemblerListingLocation>
+      <BasicRuntimeChecks>Default</BasicRuntimeChecks>
+      <ExceptionHandling>
+      </ExceptionHandling>
+      <InlineFunctionExpansion>AnySuitable</InlineFunctionExpansion>
+      <MinimalRebuild></MinimalRebuild>
+      <Optimization>MaxSpeed</Optimization>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <SupportJustMyCode></SupportJustMyCode>
+      <UseFullPaths>false</UseFullPaths>
+      <WarningLevel>Level4</WarningLevel>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;LIBSSH2_WINCNG;HAVE_CONFIG_H;LIBSSH2_ECDSA_WINCNG;CMAKE_INTDIR="Release"</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)</ObjectFileName>
+      <DebugInformationFormat>
+      </DebugInformationFormat>
+      <ScanSourceForModuleDependencies>false</ScanSourceForModuleDependencies>
+    </ClCompile>
+    <ResourceCompile>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;LIBSSH2_WINCNG;HAVE_CONFIG_H;LIBSSH2_ECDSA_WINCNG;CMAKE_INTDIR=\"Release\"</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>C:\Work\personal\liney-win\third_party\libssh2\include;C:\Work\personal\liney-win\build-libssh2\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ResourceCompile>
+    <Midl>
+      <AdditionalIncludeDirectories>C:\Work\personal\liney-win\third_party\libssh2\include;C:\Work\personal\liney-win\build-libssh2\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
+      <HeaderFileName>%(Filename).h</HeaderFileName>
+      <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
+      <InterfaceIdentifierFileName>%(Filename)_i.c</InterfaceIdentifierFileName>
+      <ProxyFileName>%(Filename)_p.c</ProxyFileName>
+    </Midl>
+    <Lib>
+      <AdditionalOptions>%(AdditionalOptions) /machine:x64</AdditionalOptions>
+    </Lib>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>C:\Work\personal\liney-win\third_party\libssh2\include;C:\Work\personal\liney-win\build-libssh2\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AssemblerListingLocation>$(IntDir)</AssemblerListingLocation>
+      <BasicRuntimeChecks>Default</BasicRuntimeChecks>
+      <ExceptionHandling>
+      </ExceptionHandling>
+      <InlineFunctionExpansion>OnlyExplicitInline</InlineFunctionExpansion>
+      <MinimalRebuild></MinimalRebuild>
+      <Optimization>MinSpace</Optimization>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <SupportJustMyCode></SupportJustMyCode>
+      <UseFullPaths>false</UseFullPaths>
+      <WarningLevel>Level4</WarningLevel>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;LIBSSH2_WINCNG;HAVE_CONFIG_H;LIBSSH2_ECDSA_WINCNG;CMAKE_INTDIR="MinSizeRel"</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)</ObjectFileName>
+      <DebugInformationFormat>
+      </DebugInformationFormat>
+      <ScanSourceForModuleDependencies>false</ScanSourceForModuleDependencies>
+    </ClCompile>
+    <ResourceCompile>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;LIBSSH2_WINCNG;HAVE_CONFIG_H;LIBSSH2_ECDSA_WINCNG;CMAKE_INTDIR=\"MinSizeRel\"</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>C:\Work\personal\liney-win\third_party\libssh2\include;C:\Work\personal\liney-win\build-libssh2\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ResourceCompile>
+    <Midl>
+      <AdditionalIncludeDirectories>C:\Work\personal\liney-win\third_party\libssh2\include;C:\Work\personal\liney-win\build-libssh2\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
+      <HeaderFileName>%(Filename).h</HeaderFileName>
+      <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
+      <InterfaceIdentifierFileName>%(Filename)_i.c</InterfaceIdentifierFileName>
+      <ProxyFileName>%(Filename)_p.c</ProxyFileName>
+    </Midl>
+    <Lib>
+      <AdditionalOptions>%(AdditionalOptions) /machine:x64</AdditionalOptions>
+    </Lib>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>C:\Work\personal\liney-win\third_party\libssh2\include;C:\Work\personal\liney-win\build-libssh2\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AssemblerListingLocation>$(IntDir)</AssemblerListingLocation>
+      <BasicRuntimeChecks>Default</BasicRuntimeChecks>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <ExceptionHandling>
+      </ExceptionHandling>
+      <InlineFunctionExpansion>OnlyExplicitInline</InlineFunctionExpansion>
+      <MinimalRebuild></MinimalRebuild>
+      <Optimization>MaxSpeed</Optimization>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <SupportJustMyCode></SupportJustMyCode>
+      <UseFullPaths>false</UseFullPaths>
+      <WarningLevel>Level4</WarningLevel>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;LIBSSH2_WINCNG;HAVE_CONFIG_H;LIBSSH2_ECDSA_WINCNG;CMAKE_INTDIR="RelWithDebInfo"</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)</ObjectFileName>
+      <ScanSourceForModuleDependencies>false</ScanSourceForModuleDependencies>
+    </ClCompile>
+    <ResourceCompile>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;LIBSSH2_WINCNG;HAVE_CONFIG_H;LIBSSH2_ECDSA_WINCNG;CMAKE_INTDIR=\"RelWithDebInfo\"</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>C:\Work\personal\liney-win\third_party\libssh2\include;C:\Work\personal\liney-win\build-libssh2\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ResourceCompile>
+    <Midl>
+      <AdditionalIncludeDirectories>C:\Work\personal\liney-win\third_party\libssh2\include;C:\Work\personal\liney-win\build-libssh2\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
+      <HeaderFileName>%(Filename).h</HeaderFileName>
+      <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
+      <InterfaceIdentifierFileName>%(Filename)_i.c</InterfaceIdentifierFileName>
+      <ProxyFileName>%(Filename)_p.c</ProxyFileName>
+    </Midl>
+    <Lib>
+      <AdditionalOptions>%(AdditionalOptions) /machine:x64</AdditionalOptions>
+    </Lib>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <CustomBuild Include="C:\Work\personal\liney-win\third_party\libssh2\src\CMakeLists.txt">
+      <UseUtf8Encoding>Always</UseUtf8Encoding>
+      <Message Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Building Custom Rule C:/Work/personal/liney-win/third_party/libssh2/src/CMakeLists.txt</Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">setlocal
+C:\Tools\CMake\bin\cmake.exe -SC:/Work/personal/liney-win/third_party/libssh2 -BC:/Work/personal/liney-win/build-libssh2 --check-stamp-file C:/Work/personal/liney-win/build-libssh2/src/CMakeFiles/generate.stamp
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:\Tools\CMake\share\cmake-3.31\Modules\BasicConfigVersion-SameMajorVersion.cmake.in;C:\Tools\CMake\share\cmake-3.31\Modules\CMakePackageConfigHelpers.cmake;C:\Tools\CMake\share\cmake-3.31\Modules\GNUInstallDirs.cmake;C:\Tools\CMake\share\cmake-3.31\Modules\WriteBasicConfigVersionFile.cmake;C:\Work\personal\liney-win\build-libssh2\src\Makefile.inc.cmake;C:\Work\personal\liney-win\third_party\libssh2\cmake\libssh2-config.cmake.in;C:\Work\personal\liney-win\third_party\libssh2\libssh2.pc.in;C:\Work\personal\liney-win\third_party\libssh2\src\Makefile.inc;%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:\Work\personal\liney-win\build-libssh2\src\CMakeFiles\generate.stamp</Outputs>
+      <LinkObjects Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">false</LinkObjects>
+      <Message Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Building Custom Rule C:/Work/personal/liney-win/third_party/libssh2/src/CMakeLists.txt</Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Release|x64'">setlocal
+C:\Tools\CMake\bin\cmake.exe -SC:/Work/personal/liney-win/third_party/libssh2 -BC:/Work/personal/liney-win/build-libssh2 --check-stamp-file C:/Work/personal/liney-win/build-libssh2/src/CMakeFiles/generate.stamp
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:\Tools\CMake\share\cmake-3.31\Modules\BasicConfigVersion-SameMajorVersion.cmake.in;C:\Tools\CMake\share\cmake-3.31\Modules\CMakePackageConfigHelpers.cmake;C:\Tools\CMake\share\cmake-3.31\Modules\GNUInstallDirs.cmake;C:\Tools\CMake\share\cmake-3.31\Modules\WriteBasicConfigVersionFile.cmake;C:\Work\personal\liney-win\build-libssh2\src\Makefile.inc.cmake;C:\Work\personal\liney-win\third_party\libssh2\cmake\libssh2-config.cmake.in;C:\Work\personal\liney-win\third_party\libssh2\libssh2.pc.in;C:\Work\personal\liney-win\third_party\libssh2\src\Makefile.inc;%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:\Work\personal\liney-win\build-libssh2\src\CMakeFiles\generate.stamp</Outputs>
+      <LinkObjects Condition="'$(Configuration)|$(Platform)'=='Release|x64'">false</LinkObjects>
+      <Message Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">Building Custom Rule C:/Work/personal/liney-win/third_party/libssh2/src/CMakeLists.txt</Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">setlocal
+C:\Tools\CMake\bin\cmake.exe -SC:/Work/personal/liney-win/third_party/libssh2 -BC:/Work/personal/liney-win/build-libssh2 --check-stamp-file C:/Work/personal/liney-win/build-libssh2/src/CMakeFiles/generate.stamp
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:\Tools\CMake\share\cmake-3.31\Modules\BasicConfigVersion-SameMajorVersion.cmake.in;C:\Tools\CMake\share\cmake-3.31\Modules\CMakePackageConfigHelpers.cmake;C:\Tools\CMake\share\cmake-3.31\Modules\GNUInstallDirs.cmake;C:\Tools\CMake\share\cmake-3.31\Modules\WriteBasicConfigVersionFile.cmake;C:\Work\personal\liney-win\build-libssh2\src\Makefile.inc.cmake;C:\Work\personal\liney-win\third_party\libssh2\cmake\libssh2-config.cmake.in;C:\Work\personal\liney-win\third_party\libssh2\libssh2.pc.in;C:\Work\personal\liney-win\third_party\libssh2\src\Makefile.inc;%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:\Work\personal\liney-win\build-libssh2\src\CMakeFiles\generate.stamp</Outputs>
+      <LinkObjects Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">false</LinkObjects>
+      <Message Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">Building Custom Rule C:/Work/personal/liney-win/third_party/libssh2/src/CMakeLists.txt</Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">setlocal
+C:\Tools\CMake\bin\cmake.exe -SC:/Work/personal/liney-win/third_party/libssh2 -BC:/Work/personal/liney-win/build-libssh2 --check-stamp-file C:/Work/personal/liney-win/build-libssh2/src/CMakeFiles/generate.stamp
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:\Tools\CMake\share\cmake-3.31\Modules\BasicConfigVersion-SameMajorVersion.cmake.in;C:\Tools\CMake\share\cmake-3.31\Modules\CMakePackageConfigHelpers.cmake;C:\Tools\CMake\share\cmake-3.31\Modules\GNUInstallDirs.cmake;C:\Tools\CMake\share\cmake-3.31\Modules\WriteBasicConfigVersionFile.cmake;C:\Work\personal\liney-win\build-libssh2\src\Makefile.inc.cmake;C:\Work\personal\liney-win\third_party\libssh2\cmake\libssh2-config.cmake.in;C:\Work\personal\liney-win\third_party\libssh2\libssh2.pc.in;C:\Work\personal\liney-win\third_party\libssh2\src\Makefile.inc;%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:\Work\personal\liney-win\build-libssh2\src\CMakeFiles\generate.stamp</Outputs>
+      <LinkObjects Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">false</LinkObjects>
+    </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="C:\Work\personal\liney-win\third_party\libssh2\src\agent.c" />
+    <ClCompile Include="C:\Work\personal\liney-win\third_party\libssh2\src\bcrypt_pbkdf.c" />
+    <ClCompile Include="C:\Work\personal\liney-win\third_party\libssh2\src\channel.c" />
+    <ClCompile Include="C:\Work\personal\liney-win\third_party\libssh2\src\comp.c" />
+    <ClCompile Include="C:\Work\personal\liney-win\third_party\libssh2\src\chacha.c" />
+    <ClCompile Include="C:\Work\personal\liney-win\third_party\libssh2\src\cipher-chachapoly.c" />
+    <ClCompile Include="C:\Work\personal\liney-win\third_party\libssh2\src\crypt.c" />
+    <ClCompile Include="C:\Work\personal\liney-win\third_party\libssh2\src\crypto.c" />
+    <ClCompile Include="C:\Work\personal\liney-win\third_party\libssh2\src\global.c" />
+    <ClCompile Include="C:\Work\personal\liney-win\third_party\libssh2\src\hostkey.c" />
+    <ClCompile Include="C:\Work\personal\liney-win\third_party\libssh2\src\keepalive.c" />
+    <ClCompile Include="C:\Work\personal\liney-win\third_party\libssh2\src\kex.c" />
+    <ClCompile Include="C:\Work\personal\liney-win\third_party\libssh2\src\knownhost.c" />
+    <ClCompile Include="C:\Work\personal\liney-win\third_party\libssh2\src\mac.c" />
+    <ClCompile Include="C:\Work\personal\liney-win\third_party\libssh2\src\misc.c" />
+    <ClCompile Include="C:\Work\personal\liney-win\third_party\libssh2\src\packet.c" />
+    <ClCompile Include="C:\Work\personal\liney-win\third_party\libssh2\src\pem.c" />
+    <ClCompile Include="C:\Work\personal\liney-win\third_party\libssh2\src\poly1305.c" />
+    <ClCompile Include="C:\Work\personal\liney-win\third_party\libssh2\src\publickey.c" />
+    <ClCompile Include="C:\Work\personal\liney-win\third_party\libssh2\src\scp.c" />
+    <ClCompile Include="C:\Work\personal\liney-win\third_party\libssh2\src\session.c" />
+    <ClCompile Include="C:\Work\personal\liney-win\third_party\libssh2\src\sftp.c" />
+    <ClCompile Include="C:\Work\personal\liney-win\third_party\libssh2\src\transport.c" />
+    <ClCompile Include="C:\Work\personal\liney-win\third_party\libssh2\src\userauth.c" />
+    <ClCompile Include="C:\Work\personal\liney-win\third_party\libssh2\src\userauth_kbd_packet.c" />
+    <ClCompile Include="C:\Work\personal\liney-win\third_party\libssh2\src\version.c" />
+    <ClInclude Include="C:\Work\personal\liney-win\third_party\libssh2\src\chacha.h" />
+    <ClInclude Include="C:\Work\personal\liney-win\third_party\libssh2\src\channel.h" />
+    <ClInclude Include="C:\Work\personal\liney-win\third_party\libssh2\src\cipher-chachapoly.h" />
+    <ClInclude Include="C:\Work\personal\liney-win\third_party\libssh2\src\comp.h" />
+    <ClInclude Include="C:\Work\personal\liney-win\third_party\libssh2\src\crypto.h" />
+    <ClInclude Include="C:\Work\personal\liney-win\third_party\libssh2\src\crypto_config.h" />
+    <ClInclude Include="C:\Work\personal\liney-win\third_party\libssh2\src\libgcrypt.h" />
+    <ClInclude Include="C:\Work\personal\liney-win\third_party\libssh2\src\libssh2_priv.h" />
+    <ClInclude Include="C:\Work\personal\liney-win\third_party\libssh2\src\libssh2_setup.h" />
+    <ClInclude Include="C:\Work\personal\liney-win\third_party\libssh2\src\mac.h" />
+    <ClInclude Include="C:\Work\personal\liney-win\third_party\libssh2\src\mbedtls.h" />
+    <ClInclude Include="C:\Work\personal\liney-win\third_party\libssh2\src\misc.h" />
+    <ClInclude Include="C:\Work\personal\liney-win\third_party\libssh2\src\openssl.h" />
+    <ClInclude Include="C:\Work\personal\liney-win\third_party\libssh2\src\os400qc3.h" />
+    <ClInclude Include="C:\Work\personal\liney-win\third_party\libssh2\src\packet.h" />
+    <ClInclude Include="C:\Work\personal\liney-win\third_party\libssh2\src\poly1305.h" />
+    <ClInclude Include="C:\Work\personal\liney-win\third_party\libssh2\src\session.h" />
+    <ClInclude Include="C:\Work\personal\liney-win\third_party\libssh2\src\sftp.h" />
+    <ClInclude Include="C:\Work\personal\liney-win\third_party\libssh2\src\transport.h" />
+    <ClInclude Include="C:\Work\personal\liney-win\third_party\libssh2\src\userauth.h" />
+    <ClInclude Include="C:\Work\personal\liney-win\third_party\libssh2\src\userauth_kbd_packet.h" />
+    <ClInclude Include="C:\Work\personal\liney-win\third_party\libssh2\src\wincng.h" />
+  </ItemGroup>
+  <ItemGroup />
+  <ItemGroup>
+    <ProjectReference Include="C:\Work\personal\liney-win\build-libssh2\ZERO_CHECK.vcxproj">
+      <Project>{029D18B2-7028-32D6-81BA-6418DA99B4E2}</Project>
+      <Name>ZERO_CHECK</Name>
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+    </ProjectReference>
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+  </ImportGroup>
+</Project>

@@ -700,7 +700,12 @@ LRESULT Window::wndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
     case WM_DPICHANGED: {
         // Moved to a monitor with different scaling: rebuild the font + cell
         // metrics at the new DPI and take the OS-suggested window rectangle.
-        dpiScale_ = static_cast<float>(HIWORD(wParam)) / 96.0f;
+        // Use the horizontal DPI for the pixel-based layout.  Keep the
+        // layout metrics in lockstep with the renderer; otherwise a window
+        // moved from 100% to 200% keeps its old-size chrome while its text
+        // has already been rebuilt for the new monitor.
+        dpiScale_ = static_cast<float>(LOWORD(wParam)) / 96.0f;
+        metrics_.uiScale = dpiScale_;
         applyFont();
         if (const RECT* r = reinterpret_cast<const RECT*>(lParam))
             SetWindowPos(hwnd_, nullptr, r->left, r->top, r->right - r->left,
