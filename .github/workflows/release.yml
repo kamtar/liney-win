@@ -33,6 +33,12 @@ jobs:
           ref: ${{ env.RELEASE_TAG }}
           submodules: recursive
 
+      - name: Initialize submodules
+        shell: pwsh
+        run: |
+          git submodule sync --recursive
+          git submodule update --init --recursive
+
       - name: Set up MSVC
         uses: ilammy/msvc-dev-cmd@v1
 
