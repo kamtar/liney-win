@@ -17,6 +17,7 @@
 
 #include <cstdlib>  // __argc, __wargv
 #include <algorithm>
+#include <cctype>
 #include <fstream>
 #include <iterator>
 #include <string>
@@ -121,17 +122,36 @@ bool runCliIfRequested(int& exitCode) {
         }
         std::wstring url;
         std::string digest;
+        std::string assetName;
+        std::string checksumUrl;
         for (const liney::Json& asset : release["assets"].items()) {
-            if (asset["name"].asString() == "liney-setup.exe") {
+            const std::string originalName = asset["name"].asString();
+            std::string name = originalName;
+            for (char& ch : name)
+                ch = static_cast<char>(std::tolower(
+                    static_cast<unsigned char>(ch)));
+            if (name == "sha256sums.txt")
+                checksumUrl = asset["browser_download_url"].asString();
+            if (url.empty() && name == "liney-setup.exe") {
                 url = liney::utf8ToWide(asset["browser_download_url"].asString());
+                assetName = originalName;
                 const std::string value = asset["digest"].asString();
-                if (value.rfind("sha256:", 0) == 0 && value.size() == 71)
+                if (value.rfind("sha256:", 0) == 0 && value.size() == 71 &&
+                    liney::isValidSha256(value.substr(7)))
                     digest = value.substr(7);
-                break;
+            }
+        }
+        if (digest.empty() && !checksumUrl.empty()) {
+            std::wstring checksumHost, checksumPath;
+            if (liney::parseTrustedInstallerUrl(
+                    liney::utf8ToWide(checksumUrl), checksumHost,
+                    checksumPath)) {
+                digest = liney::parseReleaseSha256(
+                    liney::httpsGet(checksumHost, checksumPath), assetName);
             }
         }
         std::wstring host, path;
-        if (url.empty() || digest.empty() ||
+        if (url.empty() || !liney::isValidSha256(digest) ||
             !liney::parseTrustedInstallerUrl(url, host, path)) {
             exitCode = 74; return true;
         }
@@ -141,14 +161,19 @@ bool runCliIfRequested(int& exitCode) {
             exitCode = 75; return true;
         }
         const bool downloaded = liney::httpsDownload(host, path, file, digest);
-        wchar_t current[MAX_PATH]{};
-        GetModuleFileNameW(nullptr, current, static_cast<DWORD>(_countof(current)));
-        const bool currentSigned = liney::verifyAuthenticode(current);
+        wchar_t current[32768]{};
+        const DWORD currentLen = GetModuleFileNameW(
+            nullptr, current, static_cast<DWORD>(_countof(current)));
+        const bool currentPathValid = currentLen > 0 &&
+                                      currentLen < _countof(current);
+        const bool currentSigned = currentPathValid &&
+                                    liney::verifyAuthenticode(current);
         const bool candidateSigned = downloaded && liney::verifyAuthenticode(file);
         const bool same = currentSigned && candidateSigned &&
                           liney::sameAuthenticodePublisher(current, file);
-        const bool trusted = downloaded && liney::updatePreservesPublisherTrust(
-            currentSigned, candidateSigned, same);
+        const bool trusted = downloaded && currentPathValid &&
+                             liney::updatePreservesPublisherTrust(
+                                 currentSigned, candidateSigned, same);
         DeleteFileW(file);
         exitCode = trusted ? 0 : 76;
         return true;

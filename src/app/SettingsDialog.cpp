@@ -147,6 +147,7 @@ void resetActivePage(State* st) {
 std::vector<std::wstring> monospaceFonts() {
     std::vector<std::wstring> out;
     HDC dc = GetDC(nullptr);
+    if (!dc) return out;
     LOGFONTW lf{};
     lf.lfCharSet = DEFAULT_CHARSET;
     EnumFontFamiliesExW(
@@ -441,7 +442,11 @@ bool showSettingsDialog(HWND owner, SettingsValues& v) {
 
     HWND dlg = CreateWindowExW(WS_EX_DLGMODALFRAME, kClass, L"Settings", style,
                                x, y, winW, winH, owner, nullptr, inst, nullptr);
-    if (!dlg) return false;
+    if (!dlg) {
+        DeleteObject(st.backgroundBrush);
+        DeleteObject(st.fieldBrush);
+        return false;
+    }
     SetWindowLongPtrW(dlg, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&st));
     // Ask Windows 11 for a dark caption and rounded native frame. Older
     // Windows versions safely ignore unsupported attributes.

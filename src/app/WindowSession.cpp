@@ -16,16 +16,38 @@
 
 #include <fstream>
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cwctype>
 #include <cstdio>
 #include <sstream>
 #include <string>
 #include <thread>
+#include <limits>
 
 namespace liney {
 
 namespace {
+
+bool jsonInteger(const Json& value, int min, int max, int& result) {
+    if (value.type() != Json::Type::Number) return false;
+    const double number = value.asNumber();
+    if (!std::isfinite(number) || std::floor(number) != number ||
+        number < min || number > max)
+        return false;
+    result = static_cast<int>(number);
+    return true;
+}
+
+bool jsonUnsigned(const Json& value, uint32_t max, uint32_t& result) {
+    if (value.type() != Json::Type::Number) return false;
+    const double number = value.asNumber();
+    if (!std::isfinite(number) || std::floor(number) != number ||
+        number < 0.0 || number > max)
+        return false;
+    result = static_cast<uint32_t>(number);
+    return true;
+}
 
 // Serialize a pane subtree: splits carry dir/ratio/children, leaves carry cwd.
 Json paneToJson(const Pane* p) {
@@ -167,8 +189,8 @@ void Window::checkForUpdates(bool quiet) {
             if (!quiet)
                 msg = L"Update check failed (no network / rate limited)";
         } else if (versionNewer(tag, local)) {
-            // Find the installer asset (prefer *setup.exe, else any .exe;
-            // case-insensitive).
+            // Find the exact installer artifact; never guess from another
+            // executable that happens to be attached to the release.
             std::string assetUrl, assetDigest, assetName, checksumUrl;
             bool selectedSetup = false;
             const Json& assets = j["assets"];
@@ -180,20 +202,17 @@ void Window::checkForUpdates(bool quiet) {
                         static_cast<unsigned char>(ch)));
                     if (name == "sha256sums.txt")
                         checksumUrl = a["browser_download_url"].asString();
-                    if (name.size() >= 4 &&
-                        name.compare(name.size() - 4, 4, ".exe") == 0 &&
-                        (!selectedSetup ||
-                         name.find("setup") != std::string::npos)) {
+                    if (!selectedSetup && name == "liney-setup.exe") {
                         assetUrl = a["browser_download_url"].asString();
                         assetDigest = a["digest"].asString();
                         assetName = originalName;
-                        selectedSetup =
-                            name.find("setup") != std::string::npos;
+                        selectedSetup = true;
                     }
                 }
-            if (!assetUrl.empty() &&
-                (assetDigest.rfind("sha256:", 0) != 0 ||
-                 assetDigest.size() != 71) &&
+            bool digestValid = assetDigest.rfind("sha256:", 0) == 0 &&
+                               assetDigest.size() == 71 &&
+                               isValidSha256(assetDigest.substr(7));
+            if (!assetUrl.empty() && !digestValid &&
                 !checksumUrl.empty()) {
                 std::wstring checksumHost, checksumPath;
                 if (parseTrustedInstallerUrl(utf8ToWide(checksumUrl),
@@ -202,15 +221,24 @@ void Window::checkForUpdates(bool quiet) {
                         httpsGet(checksumHost, checksumPath);
                     const std::string fallback =
                         parseReleaseSha256(manifest, assetName);
-                    if (!fallback.empty()) assetDigest = "sha256:" + fallback;
+                    if (!fallback.empty()) {
+                        assetDigest = "sha256:" + fallback;
+                        digestValid = true;
+                    }
                 }
             }
             msg = L"Update available: " + utf8ToWide(tag);
-            if (!assetUrl.empty() && assetDigest.rfind("sha256:", 0) == 0 &&
-                assetDigest.size() == 71) {
-                url = utf8ToWide(assetUrl);
-                sha256 = assetDigest.substr(7);
-                pending = true;
+            if (!assetUrl.empty() && digestValid) {
+                const std::wstring candidateUrl = utf8ToWide(assetUrl);
+                std::wstring candidateHost, candidatePath;
+                if (parseTrustedInstallerUrl(candidateUrl, candidateHost,
+                                              candidatePath)) {
+                    url = candidateUrl;
+                    sha256 = assetDigest.substr(7);
+                    pending = true;
+                } else {
+                    msg += L" (untrusted installer URL; refusing unsafe update)";
+                }
             } else if (assetUrl.empty()) {
                 msg += L" (no installer asset)";
             } else {
@@ -244,6 +272,18 @@ void Window::startDownloadAndInstall(const std::wstring& url,
         showBalloon(L"Liney", L"Untrusted update URL blocked");
         return;
     }
+    if (!isValidSha256(sha256)) {
+        showBalloon(L"Liney", L"Invalid update checksum blocked");
+        return;
+    }
+
+    {
+        std::lock_guard<std::mutex> lk(updateMutex_);
+        pendingUpdate_ = false;
+        downloadUrl_.clear();
+        downloadSha256_.clear();
+        installerPath_.clear();
+    }
 
     wchar_t tmp[MAX_PATH]{}, unique[MAX_PATH]{};
     if (!GetTempPathW(MAX_PATH, tmp) || !GetTempFileNameW(tmp, L"lny", 0, unique)) {
@@ -270,21 +310,33 @@ void Window::startDownloadAndInstall(const std::wstring& url,
         wchar_t currentExe[32768]{};
         const DWORD currentLen = GetModuleFileNameW(
             nullptr, currentExe, static_cast<DWORD>(_countof(currentExe)));
-        if (dl && currentLen > 0 && currentLen < _countof(currentExe)) {
-            const bool currentSigned = verifyAuthenticode(currentExe);
-            const bool candidateSigned = verifyAuthenticode(out);
-            const bool samePublisher = currentSigned && candidateSigned &&
-                                       sameAuthenticodePublisher(currentExe, out);
-            if (!updatePreservesPublisherTrust(currentSigned, candidateSigned,
-                                               samePublisher)) {
+        if (dl) {
+            if (currentLen == 0 || currentLen >= _countof(currentExe)) {
                 dl = false;
                 DeleteFileW(out.c_str());
+            } else {
+                const bool currentSigned = verifyAuthenticode(currentExe);
+                const bool candidateSigned = verifyAuthenticode(out);
+                const bool samePublisher = currentSigned && candidateSigned &&
+                                           sameAuthenticodePublisher(currentExe, out);
+                if (!updatePreservesPublisherTrust(currentSigned, candidateSigned,
+                                                   samePublisher)) {
+                    dl = false;
+                    DeleteFileW(out.c_str());
+                }
             }
         }
         {
             std::lock_guard<std::mutex> lk(updateMutex_);
-            if (dl) installerPath_ = out;
-            else { updateMsg_ = L"Update download failed"; }
+            if (dl) {
+                installerPath_ = out;
+            } else {
+                installerPath_.clear();
+                downloadUrl_.clear();
+                downloadSha256_.clear();
+                pendingUpdate_ = false;
+                updateMsg_ = L"Update download failed";
+            }
         }
         if (dl) installerReady_ = true;
         else updateReady_ = true;
@@ -517,9 +569,10 @@ std::unique_ptr<Pane> Window::paneFromJson(const Json& j, int cols, int rows) {
         auto p = std::make_unique<Pane>();
         p->isSplit = true;
         p->dir = (j["dir"].asString() == "rows") ? SplitDir::Rows : SplitDir::Cols;
-        p->ratio = static_cast<float>(j["ratio"].asNumber(0.5));
-        if (p->ratio < 0.05f) p->ratio = 0.05f;
-        if (p->ratio > 0.95f) p->ratio = 0.95f;
+        const double ratio = j["ratio"].asNumber(0.5);
+        p->ratio = std::isfinite(ratio)
+            ? static_cast<float>(std::clamp(ratio, 0.05, 0.95))
+            : 0.5f;
         auto a = paneFromJson(j["a"], cols, rows);
         auto b = paneFromJson(j["b"], cols, rows);
         if (a && b) { p->a = std::move(a); p->b = std::move(b); return p; }
@@ -554,7 +607,10 @@ std::unique_ptr<Pane> Window::paneFromJson(const Json& j, int cols, int rows) {
             SshProfile profile;
             profile.name = utf8ToWide(ssh["name"].asString());
             profile.host = utf8ToWide(ssh["host"].asString());
-            profile.port = static_cast<int>(ssh["port"].asNumber(22));
+            int port = 22;
+            if (ssh.contains("port") && !jsonInteger(ssh["port"], 1, 65535, port))
+                port = 0;
+            profile.port = port;
             profile.identityFile = utf8ToWide(ssh["identityFile"].asString());
             profile.user = utf8ToWide(ssh["user"].asString());
             if (validSshProfile(profile)) context.sshProfile = std::move(profile);
@@ -577,18 +633,20 @@ std::unique_ptr<Pane> Window::paneFromJson(const Json& j, int cols, int rows) {
         if (serial.isObject()) {
             profile.name = utf8ToWide(serial["name"].asString());
             profile.port = utf8ToWide(serial["port"].asString());
-            profile.baudRate = static_cast<uint32_t>(
-                serial["baudRate"].asNumber(profile.baudRate));
-            profile.dataBits = static_cast<uint8_t>(
-                serial["dataBits"].asNumber(profile.dataBits));
-            profile.parity = static_cast<SerialParity>(
-                static_cast<int>(serial["parity"].asNumber(0)));
-            profile.stopBits = static_cast<SerialStopBits>(
-                static_cast<int>(serial["stopBits"].asNumber(0)));
-            profile.mode = static_cast<SerialMode>(
-                static_cast<int>(serial["mode"].asNumber(0)));
-            profile.lineEnding = static_cast<SerialLineEnding>(
-                static_cast<int>(serial["lineEnding"].asNumber(0)));
+            uint32_t number = 0;
+            if (jsonUnsigned(serial["baudRate"], 4'000'000, number))
+                profile.baudRate = number;
+            if (jsonUnsigned(serial["dataBits"], 8, number) && number >= 5)
+                profile.dataBits = static_cast<uint8_t>(number);
+            int enumValue = 0;
+            if (jsonInteger(serial["parity"], 0, 4, enumValue))
+                profile.parity = static_cast<SerialParity>(enumValue);
+            if (jsonInteger(serial["stopBits"], 0, 2, enumValue))
+                profile.stopBits = static_cast<SerialStopBits>(enumValue);
+            if (jsonInteger(serial["mode"], 0, 2, enumValue))
+                profile.mode = static_cast<SerialMode>(enumValue);
+            if (jsonInteger(serial["lineEnding"], 0, 3, enumValue))
+                profile.lineEnding = static_cast<SerialLineEnding>(enumValue);
         } else {
             for (const SerialProfile& candidate : serialPorts_)
                 if (candidate.name == context.taskName ||
@@ -676,16 +734,23 @@ bool Window::restoreLayoutFrom(const std::wstring& path) {
     // rect (MoveWindow fires WM_SIZE synchronously). Done before show().
     const Json& w = root["window"];
     if (w.isObject()) {
-        int x = static_cast<int>(w["x"].asNumber(0));
-        int y = static_cast<int>(w["y"].asNumber(0));
-        const int ww = static_cast<int>(w["w"].asNumber(0));
-        const int hh = static_cast<int>(w["h"].asNumber(0));
+        int x = 0, y = 0, ww = 0, hh = 0;
+        jsonInteger(w["x"], std::numeric_limits<int>::min(),
+                    std::numeric_limits<int>::max(), x);
+        jsonInteger(w["y"], std::numeric_limits<int>::min(),
+                    std::numeric_limits<int>::max(), y);
+        jsonInteger(w["w"], 0, std::numeric_limits<int>::max(), ww);
+        jsonInteger(w["h"], 0, std::numeric_limits<int>::max(), hh);
         if (ww >= 200 && hh >= 150) {
             // The saved position may be on a monitor that's gone (undocked
             // laptop, unplugged display) — restoring it verbatim leaves the
             // window fully off-screen and the app looks like it didn't start.
             // Snap the rect into the work area of the nearest live monitor.
-            RECT r{ x, y, x + ww, y + hh };
+            const int right = x > std::numeric_limits<int>::max() - ww
+                ? std::numeric_limits<int>::max() : x + ww;
+            const int bottom = y > std::numeric_limits<int>::max() - hh
+                ? std::numeric_limits<int>::max() : y + hh;
+            RECT r{ x, y, right, bottom };
             HMONITOR mon = MonitorFromRect(&r, MONITOR_DEFAULTTONEAREST);
             MONITORINFO mi{};
             mi.cbSize = sizeof(mi);
@@ -721,7 +786,8 @@ bool Window::restoreLayoutFrom(const std::wstring& path) {
     }
     if (tabs_.empty()) return false;
 
-    const int at = static_cast<int>(root["activeTab"].asNumber(0));
+    int at = 0;
+    jsonInteger(root["activeTab"], 0, std::numeric_limits<int>::max(), at);
     activeTab_ = (at >= 0 && at < static_cast<int>(tabs_.size()))
                      ? static_cast<size_t>(at)
                      : 0;

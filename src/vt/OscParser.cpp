@@ -5,9 +5,19 @@
 namespace liney {
 
 void OscParser::feed(const char* data, size_t len) {
+    if (!data || len == 0) return;
     for (size_t i = 0; i < len; ++i) {
         ++streamOffset_;
         const unsigned char ch = static_cast<unsigned char>(data[i]);
+
+        // Match the terminal core's cancellation transition so a cancelled
+        // string cannot swallow ordinary output until a later terminator.
+        if (ch == 0x18 || ch == 0x1A) {  // CAN/SUB
+            payload_.clear();
+            overflow_ = false;
+            state_ = State::Ground;
+            continue;
+        }
         switch (state_) {
         case State::Ground:
             if (ch == 0x1b) state_ = State::Escape;
@@ -40,19 +50,14 @@ void OscParser::feed(const char* data, size_t len) {
                 finishOsc();
                 state_ = State::Ground;
             } else {
-                // ESC inside an OSC that is not ST. Keep observing but never
-                // let the bounded payload grow without limit.
-                const size_t limit =
-                    payload_.rfind("1337;File=", 0) == 0
-                        ? kMaxImagePayload : kMaxPayload;
-                if (!overflow_ && payload_.size() + 2 <= limit) {
-                    payload_.push_back('\x1b');
-                    payload_.push_back(data[i]);
-                } else {
-                    overflow_ = true;
+                // ESC is a global transition in the terminal core. A
+                // non-ST character aborts this OSC; ESC ] starts a fresh one.
+                state_ = State::Ground;
+                if (ch == ']') {
                     payload_.clear();
+                    overflow_ = false;
+                    state_ = State::Osc;
                 }
-                state_ = State::Osc;
             }
             break;
         }

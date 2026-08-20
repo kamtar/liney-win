@@ -336,8 +336,9 @@ struct SshConnection::Impl {
         if (error) *error = std::move(value);
     }
 
-    bool waitForIo(unsigned long timeoutMs = 100) {
-        if (stopRequested.load(std::memory_order_acquire)) return false;
+    bool waitForIo(unsigned long timeoutMs = 100, bool allowStop = false) {
+        if (!allowStop && stopRequested.load(std::memory_order_acquire))
+            return false;
         fd_set readSet{};
         fd_set writeSet{};
         FD_ZERO(&readSet);
@@ -357,16 +358,17 @@ struct SshConnection::Impl {
         timeout.tv_usec = static_cast<long>((timeoutMs % 1000) * 1000);
         const int result = select(0, &readSet, &writeSet, nullptr, &timeout);
         return result >= 0 &&
-               !stopRequested.load(std::memory_order_acquire);
+               (allowStop || !stopRequested.load(std::memory_order_acquire));
     }
 
     template <typename Function>
-    int retryInt(Function&& function, unsigned long timeoutMs = 15000) {
+    int retryInt(Function&& function, unsigned long timeoutMs = 15000,
+                 bool allowStop = false) {
         const ULONGLONG deadline = GetTickCount64() + timeoutMs;
         for (;;) {
             const int result = function();
             if (result != LIBSSH2_ERROR_EAGAIN) return result;
-            if (GetTickCount64() >= deadline || !waitForIo(100))
+            if (GetTickCount64() >= deadline || !waitForIo(100, allowStop))
                 return LIBSSH2_ERROR_TIMEOUT;
         }
     }
@@ -493,10 +495,12 @@ struct SshConnection::Impl {
             completeDirectory(std::move(result), request.id);
         }
         if (directoryJob) {
-        if (directoryJob->handle) {
-            libssh2_sftp_closedir(directoryJob->handle);
-            directoryJob->handle = nullptr;
-        }
+            if (directoryJob->handle) {
+                retryInt([&] {
+                    return libssh2_sftp_closedir(directoryJob->handle);
+                }, 2000, true);
+                directoryJob->handle = nullptr;
+            }
         closeRootChannel(*directoryJob);
         directoryJob->result.error = error;
             completeDirectory(std::move(directoryJob->result),
@@ -508,7 +512,9 @@ struct SshConnection::Impl {
     void closeResources() {
         if (directoryJob) {
             if (directoryJob->handle) {
-                libssh2_sftp_closedir(directoryJob->handle);
+                retryInt([&] {
+                    return libssh2_sftp_closedir(directoryJob->handle);
+                }, 2000, true);
                 directoryJob->handle = nullptr;
             }
             closeRootChannel(*directoryJob);
@@ -566,6 +572,7 @@ struct SshConnection::Impl {
             return false;
         }
         for (addrinfo* address = addresses; address; address = address->ai_next) {
+            if (stopRequested.load(std::memory_order_acquire)) break;
             SOCKET candidate = ::socket(address->ai_family, address->ai_socktype,
                                         address->ai_protocol);
             if (candidate == INVALID_SOCKET) continue;
@@ -573,21 +580,29 @@ struct SshConnection::Impl {
             ioctlsocket(candidate, FIONBIO, &nonBlocking);
             const int rc = ::connect(candidate, address->ai_addr,
                                      static_cast<int>(address->ai_addrlen));
-            if (rc != 0 && WSAGetLastError() != WSAEWOULDBLOCK &&
-                WSAGetLastError() != WSAEINPROGRESS) {
+            const int connectError = rc == 0 ? 0 : WSAGetLastError();
+            if (rc != 0 && connectError != WSAEWOULDBLOCK &&
+                connectError != WSAEINPROGRESS) {
                 closesocket(candidate);
                 continue;
             }
-            fd_set writeSet{};
-            FD_ZERO(&writeSet);
-            FD_SET(candidate, &writeSet);
-            timeval timeout{10, 0};
-            const int ready = select(0, nullptr, &writeSet, nullptr, &timeout);
+            int ready = rc == 0 ? 1 : 0;
+            const ULONGLONG deadline = GetTickCount64() + 10000;
+            while (ready == 0 && !stopRequested.load(std::memory_order_acquire) &&
+                   GetTickCount64() < deadline) {
+                fd_set writeSet{};
+                FD_ZERO(&writeSet);
+                FD_SET(candidate, &writeSet);
+                timeval timeout{0, 100000};
+                ready = select(0, nullptr, &writeSet, nullptr, &timeout);
+                if (ready < 0) break;
+            }
             int socketError = 0;
             int socketErrorSize = sizeof(socketError);
             getsockopt(candidate, SOL_SOCKET, SO_ERROR,
                        reinterpret_cast<char*>(&socketError), &socketErrorSize);
-            if ((rc == 0 || ready > 0) && socketError == 0) {
+            if (!stopRequested.load(std::memory_order_acquire) &&
+                (rc == 0 || ready > 0) && socketError == 0) {
                 socket = candidate;
                 break;
             }
@@ -595,7 +610,8 @@ struct SshConnection::Impl {
         }
         freeaddrinfo(addresses);
         if (socket == INVALID_SOCKET) {
-            setError(error, win32Error(L"SSH socket connection", WSAGetLastError()));
+            if (!stopRequested.load(std::memory_order_acquire))
+                setError(error, L"SSH socket connection timed out or failed");
             return false;
         }
         return true;
@@ -1088,6 +1104,12 @@ struct SshConnection::Impl {
             }
             char name[4096]{};
             for (;;) {
+                if (stopRequested.load(std::memory_order_acquire)) {
+                    error = L"SSH session stopped";
+                    retryInt([&] { return libssh2_sftp_closedir(handle); },
+                             2000, true);
+                    return false;
+                }
                 LIBSSH2_SFTP_ATTRIBUTES attributes{};
                 const int length = retryInt([&] {
                     return libssh2_sftp_readdir(handle, name,
@@ -1097,7 +1119,8 @@ struct SshConnection::Impl {
                 if (length == 0) break;
                 if (length < 0) {
                     error = sftpError(L"Could not read remote directory");
-                    retryInt([&] { return libssh2_sftp_closedir(handle); });
+                    retryInt([&] { return libssh2_sftp_closedir(handle); },
+                             2000, true);
                     return false;
                 }
                 name[std::min<int>(length,
@@ -1106,7 +1129,8 @@ struct SshConnection::Impl {
                     std::strcmp(name, "..") != 0)
                     entries.emplace_back(name, isDirectory(attributes));
             }
-            if (retryInt([&] { return libssh2_sftp_closedir(handle); }) != 0) {
+            if (retryInt([&] { return libssh2_sftp_closedir(handle); },
+                         2000, true) != 0) {
                 error = sftpError(L"Could not close remote directory");
                 return false;
             }
@@ -1117,6 +1141,10 @@ struct SshConnection::Impl {
                            std::wstring&)> copyTree;
         copyTree = [&](const std::string& from, const std::string& to,
                        std::wstring& error) {
+            if (stopRequested.load(std::memory_order_acquire)) {
+                error = L"SSH session stopped";
+                return false;
+            }
             LIBSSH2_SFTP_ATTRIBUTES attributes{};
             if (!statPath(from, attributes)) {
                 error = sftpError(L"Could not inspect remote source");
@@ -1132,6 +1160,10 @@ struct SshConnection::Impl {
                 std::vector<std::pair<std::string, bool>> entries;
                 if (!listDirectory(from, entries, error)) return false;
                 for (const auto& entry : entries) {
+                    if (stopRequested.load(std::memory_order_acquire)) {
+                        error = L"SSH session stopped";
+                        return false;
+                    }
                     if (!copyTree(joinPath(from, entry.first),
                                   joinPath(to, entry.first), error))
                         return false;
@@ -1154,7 +1186,7 @@ struct SshConnection::Impl {
                     0644);
             });
             if (!output) {
-                retryInt([&] { return libssh2_sftp_close(input); });
+                retryInt([&] { return libssh2_sftp_close(input); }, 2000, true);
                 error = sftpError(L"Could not create remote destination");
                 return false;
             }
@@ -1162,6 +1194,11 @@ struct SshConnection::Impl {
             char buffer[64 * 1024];
             bool ok = true;
             for (;;) {
+                if (stopRequested.load(std::memory_order_acquire)) {
+                    error = L"SSH session stopped";
+                    ok = false;
+                    break;
+                }
                 const int read = retryInt([&] {
                     return static_cast<int>(libssh2_sftp_read(
                         input, buffer, sizeof(buffer)));
@@ -1174,6 +1211,11 @@ struct SshConnection::Impl {
                 }
                 int offset = 0;
                 while (offset < read) {
+                    if (stopRequested.load(std::memory_order_acquire)) {
+                        error = L"SSH session stopped";
+                        ok = false;
+                        break;
+                    }
                     const int written = retryInt([&] {
                         return static_cast<int>(libssh2_sftp_write(
                             output, buffer + offset,
@@ -1188,11 +1230,13 @@ struct SshConnection::Impl {
                 }
                 if (!ok) break;
             }
-            if (retryInt([&] { return libssh2_sftp_close(input); }) != 0 && ok) {
+            if (retryInt([&] { return libssh2_sftp_close(input); }, 2000, true) != 0 &&
+                ok) {
                 error = sftpError(L"Could not close remote source");
                 ok = false;
             }
-            if (retryInt([&] { return libssh2_sftp_close(output); }) != 0 && ok) {
+            if (retryInt([&] { return libssh2_sftp_close(output); }, 2000, true) != 0 &&
+                ok) {
                 error = sftpError(L"Could not close remote destination");
                 ok = false;
             }
@@ -1201,6 +1245,10 @@ struct SshConnection::Impl {
 
         std::function<bool(const std::string&, std::wstring&)> deleteTree;
         deleteTree = [&](const std::string& path, std::wstring& error) {
+            if (stopRequested.load(std::memory_order_acquire)) {
+                error = L"SSH session stopped";
+                return false;
+            }
             LIBSSH2_SFTP_ATTRIBUTES attributes{};
             if (!statPath(path, attributes)) {
                 error = sftpError(L"Could not inspect remote path");
@@ -1209,9 +1257,14 @@ struct SshConnection::Impl {
             if (isDirectory(attributes)) {
                 std::vector<std::pair<std::string, bool>> entries;
                 if (!listDirectory(path, entries, error)) return false;
-                for (const auto& entry : entries)
+                for (const auto& entry : entries) {
+                    if (stopRequested.load(std::memory_order_acquire)) {
+                        error = L"SSH session stopped";
+                        return false;
+                    }
                     if (!deleteTree(joinPath(path, entry.first), error))
                         return false;
+                }
                 if (retryInt([&] {
                         return libssh2_sftp_rmdir(sftp, path.c_str());
                     }) != 0) {

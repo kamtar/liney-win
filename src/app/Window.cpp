@@ -145,6 +145,7 @@ std::wstring quoteArg(const std::wstring& value) {
 
 Window::Window() : renderer_(std::make_unique<D2DRenderer>()) {}
 Window::~Window() {
+    g_wakeHwnd.store(nullptr, std::memory_order_release);
     if (workspaceRefreshThread_.joinable()) workspaceRefreshThread_.join();
     // Wait for update-check/download workers: they capture `this` and would
     // otherwise write into a destroyed Window (bounded by the HTTP timeouts).
@@ -899,6 +900,7 @@ LRESULT Window::wndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
         }
         return DefWindowProcW(hwnd_, msg, wParam, lParam);
     case WM_DESTROY:
+        g_wakeHwnd.store(nullptr, std::memory_order_release);
         removeTray();
         PostQuitMessage(headlessExitCode_);
         return 0;
@@ -2335,11 +2337,18 @@ void Window::openTabMenu(int xi, int yi) {
     case 3:
         if (!cwd.empty() && OpenClipboard(hwnd_)) {
             EmptyClipboard();
-            const size_t bytes = (cwd.size() + 1) * sizeof(wchar_t);
-            if (HGLOBAL h = GlobalAlloc(GMEM_MOVEABLE, bytes)) {
-                memcpy(GlobalLock(h), cwd.c_str(), bytes);
-                GlobalUnlock(h);
-                SetClipboardData(CF_UNICODETEXT, h);
+            if (cwd.size() <= (SIZE_MAX / sizeof(wchar_t)) - 1) {
+                const size_t bytes = (cwd.size() + 1) * sizeof(wchar_t);
+                if (HGLOBAL h = GlobalAlloc(GMEM_MOVEABLE, bytes)) {
+                    if (void* data = GlobalLock(h)) {
+                        memcpy(data, cwd.c_str(), bytes);
+                        GlobalUnlock(h);
+                        if (!SetClipboardData(CF_UNICODETEXT, h))
+                            GlobalFree(h);
+                    } else {
+                        GlobalFree(h);
+                    }
+                }
             }
             CloseClipboard();
         }

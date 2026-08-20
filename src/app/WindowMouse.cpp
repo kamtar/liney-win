@@ -138,13 +138,14 @@ UINT preferredDropEffectFormat() {
 HGLOBAL createFileDropHandle(const std::vector<std::wstring>& paths) {
     if (paths.empty()) return nullptr;
     size_t chars = 1;  // The final list terminator.
+    const size_t maxChars =
+        (SIZE_MAX - sizeof(DROPFILES)) / sizeof(wchar_t);
     for (const std::wstring& path : paths) {
-        if (path.empty() || path.size() > (SIZE_MAX / sizeof(wchar_t)) - chars - 1)
+        if (path.empty() || chars >= maxChars ||
+            path.size() > maxChars - chars - 1)
             return nullptr;
         chars += path.size() + 1;
     }
-    if (chars > (SIZE_MAX - sizeof(DROPFILES)) / sizeof(wchar_t))
-        return nullptr;
     const SIZE_T bytes = sizeof(DROPFILES) + chars * sizeof(wchar_t);
     HGLOBAL handle = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, bytes);
     if (!handle) return nullptr;
@@ -1740,12 +1741,19 @@ void Window::setClipboardText(const std::wstring& text) {
     if (text.empty() || !OpenClipboard(hwnd_)) return;
     EmptyClipboard();
     bool copied = false;
+    if (text.size() > (SIZE_MAX / sizeof(wchar_t)) - 1) {
+        CloseClipboard();
+        return;
+    }
     const size_t bytes = (text.size() + 1) * sizeof(wchar_t);
     if (HGLOBAL h = GlobalAlloc(GMEM_MOVEABLE, bytes)) {
         if (void* p = GlobalLock(h)) {
             memcpy(p, text.c_str(), bytes);
             GlobalUnlock(h);
-            copied = SetClipboardData(CF_UNICODETEXT, h) != nullptr;
+            if (SetClipboardData(CF_UNICODETEXT, h))
+                copied = true;
+            else
+                GlobalFree(h);
         } else {
             GlobalFree(h);
         }
@@ -1795,13 +1803,8 @@ void Window::paste() {
             return;
     }
 
-    int bytes = WideCharToMultiByte(CP_UTF8, 0, norm.data(),
-                                    static_cast<int>(norm.size()), nullptr, 0,
-                                    nullptr, nullptr);
-    if (bytes <= 0) return;
-    std::string utf8(static_cast<size_t>(bytes), '\0');
-    WideCharToMultiByte(CP_UTF8, 0, norm.data(), static_cast<int>(norm.size()),
-                        utf8.data(), bytes, nullptr, nullptr);
+    const std::string utf8 = wideToUtf8(norm);
+    if (utf8.empty() && !norm.empty()) return;
 
     s->scrollToBottom();
     if (s->serialRawTextMode()) {

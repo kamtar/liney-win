@@ -12,6 +12,13 @@ ConPty::~ConPty() { stop(); }
 bool ConPty::start(const std::wstring& command, short cols, short rows,
                    const std::wstring& cwd, OutputHandler onOutput,
                    ExitHandler onExit) {
+    stop();
+    {
+        std::lock_guard<std::mutex> lock(writeMutex_);
+        writeStop_ = false;
+        writeQueue_.clear();
+    }
+    exited_ = false;
     onOutput_ = std::move(onOutput);
     onExit_ = std::move(onExit);
 
@@ -85,8 +92,11 @@ bool ConPty::start(const std::wstring& command, short cols, short rows,
                 read == 0) {
                 break;
             }
-            if (onOutput_) onOutput_(buf.data(), read);
+            if (running_ && onOutput_) onOutput_(buf.data(), read);
         }
+        running_ = false;
+        if (inputWrite_) CancelIoEx(inputWrite_, nullptr);
+        writeCv_.notify_one();
         exited_ = true;
         // Wake the UI so a dead shell is reaped promptly (the message loop
         // sleeps until something marks the frame dirty).
@@ -98,9 +108,13 @@ bool ConPty::start(const std::wstring& command, short cols, short rows,
         for (;;) {
             {
                 std::unique_lock<std::mutex> lock(writeMutex_);
-                writeCv_.wait(lock,
-                              [this] { return writeStop_ || !writeQueue_.empty(); });
-                if (writeStop_ && writeQueue_.empty()) return;
+                writeCv_.wait(lock, [this] {
+                    return writeStop_ || !running_ || !writeQueue_.empty();
+                });
+                if (writeStop_ || !running_) {
+                    writeQueue_.clear();
+                    return;
+                }
                 pending.clear();
                 pending.swap(writeQueue_);
             }
@@ -159,7 +173,7 @@ bool ConPty::hasRunningChild() const {
 }
 
 void ConPty::write(const char* data, size_t len) {
-    if (!inputWrite_ || len == 0) return;
+    if (!data || !inputWrite_ || len == 0) return;
     {
         std::lock_guard<std::mutex> lock(writeMutex_);
         if (writeStop_) return;
@@ -230,6 +244,8 @@ void ConPty::stop() {
         CloseHandle(procInfo_.hThread);
         procInfo_.hThread = nullptr;
     }
+    procInfo_ = {};
+    exited_ = true;
 }
 
 } // namespace liney

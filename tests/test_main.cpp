@@ -334,6 +334,18 @@ void testUpdatePolicy() {
     check(liney::versionNewer("v0.6.0", "0.5.10"), "new minor version accepted");
     check(!liney::versionNewer("v0.5.9", "0.5.10"), "older patch rejected");
     check(!liney::versionNewer("v0.6.0", "0.6.0"), "same version rejected");
+    check(liney::versionNewer("0.10.10", "0.10.9"),
+          "higher patch version accepted");
+    check(!liney::versionNewer("v0.10.10-preview", "0.10.9"),
+          "malformed prerelease tag rejected");
+    check(!liney::versionNewer("v0.10", "0.10.9"),
+          "incomplete version tag rejected");
+    check(!liney::versionNewer("v999999999999999999999.0.0", "0.10.9"),
+          "overflowing version tag rejected");
+    check(liney::isValidSha256(std::string(64, 'A')),
+          "uppercase SHA-256 digest accepted");
+    check(!liney::isValidSha256(std::string(63, 'a') + "z"),
+          "malformed SHA-256 digest rejected");
     std::wstring host, path;
     check(liney::parseTrustedInstallerUrl(
               L"https://github.com/kamtar/liney-win/releases/download/v0.6.0/liney-setup.exe",
@@ -349,6 +361,12 @@ void testUpdatePolicy() {
     check(!liney::parseTrustedInstallerUrl(
               L"https://github.com/other/repo/releases/download/v1/a.exe", host, path),
           "foreign GitHub repository rejected");
+    host = L"stale-host";
+    path = L"stale-path";
+    check(!liney::parseTrustedInstallerUrl(
+              L"https://github.com/kamtar/liney-win/releases/download/v1/a.exe?x=1",
+              host, path) && host.empty() && path.empty(),
+          "release URL query strings rejected and outputs cleared");
     const std::string digest(64, 'A');
     check(liney::parseReleaseSha256(
               digest + "  liney-setup.exe\r\n", "liney-setup.exe") ==

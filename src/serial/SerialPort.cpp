@@ -164,7 +164,8 @@ bool SerialPort::start(const SerialProfile& profile, OutputHandler onOutput,
                     setError(error);
                 break;
             }
-            if (read != 0 && onOutput_) onOutput_(buffer.data(), read);
+            if (running_ && read != 0 && onOutput_)
+                onOutput_(buffer.data(), read);
         }
         running_ = false;
         if (handle_) CancelIoEx(handle_, nullptr);

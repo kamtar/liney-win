@@ -15,9 +15,11 @@ std::wstring lower(std::wstring value) {
 
 std::wstring trim(std::wstring value) {
     const auto isSpace = [](wchar_t ch) { return iswspace(ch) != 0; };
-    while (!value.empty() && isSpace(value.front())) value.erase(value.begin());
-    while (!value.empty() && isSpace(value.back())) value.pop_back();
-    return value;
+    size_t first = 0;
+    while (first < value.size() && isSpace(value[first])) ++first;
+    size_t last = value.size();
+    while (last > first && isSpace(value[last - 1])) --last;
+    return value.substr(first, last - first);
 }
 
 bool containsWord(const std::wstring& words, const std::wstring& wanted) {

@@ -76,9 +76,14 @@ SftpListing listSftpDirectory(const SshProfile& profile,
     std::wstring batch;
     if (!path.empty()) batch += L"cd " + quoteSftpArg(path) + L"\n";
     batch += L"pwd\nls -la\nquit\n";
+    const std::string batchUtf8 = toUtf8(batch);
+    if (batchUtf8.empty()) {
+        result.error = L"The SFTP path is not valid UTF-8.";
+        return result;
+    }
     bool processOk = false;
     const std::wstring output = runCaptureWithInput(
-        command, L"", toUtf8(batch), &processOk, timeoutMs);
+        command, L"", batchUtf8, &processOk, timeoutMs);
     if (!processOk) {
         result.error = L"SFTP could not authenticate without prompting. "
                        L"Configure an SSH key or agent for this host.";

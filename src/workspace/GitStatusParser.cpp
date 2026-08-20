@@ -1,5 +1,7 @@
 #include "workspace/GitStatusParser.h"
 
+#include <cerrno>
+#include <climits>
 #include <cwchar>
 
 namespace liney {
@@ -16,10 +18,26 @@ GitWorktreeStatus parseGitStatusPorcelainV2(const std::wstring& text) {
             result.branch = line.substr(14);
             result.detached = result.branch == L"(detached)";
         } else if (line.rfind(L"# branch.ab ", 0) == 0) {
-            int ahead = 0, behind = 0;
-            if (swscanf(line.c_str() + 12, L"+%d -%d", &ahead, &behind) == 2) {
-                result.ahead = ahead;
-                result.behind = behind;
+            const wchar_t* p = line.c_str() + 12;
+            if (*p++ == L'+' && *p >= L'0' && *p <= L'9') {
+                errno = 0;
+                wchar_t* end = nullptr;
+                const unsigned long aheadValue = wcstoul(p, &end, 10);
+                const bool aheadOk = end != p && *end == L' ' &&
+                    errno != ERANGE && aheadValue <= INT_MAX;
+                if (aheadOk) {
+                    p = end + 1;
+                    if (*p++ == L'-' && *p >= L'0' && *p <= L'9') {
+                        errno = 0;
+                        const unsigned long behindValue = wcstoul(p, &end, 10);
+                        const bool behindOk = end != p && *end == L'\0' &&
+                            errno != ERANGE && behindValue <= INT_MAX;
+                        if (behindOk) {
+                            result.ahead = static_cast<int>(aheadValue);
+                            result.behind = static_cast<int>(behindValue);
+                        }
+                    }
+                }
             }
         } else if (!line.empty() &&
                    (line[0] == L'1' || line[0] == L'2' || line[0] == L'u' ||

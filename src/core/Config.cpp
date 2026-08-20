@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdio>
 #include <fstream>
+#include <limits>
 #include <sstream>
 #include <string>
 
@@ -27,20 +28,31 @@ void configWarning(const std::wstring& message, const wchar_t* title) {
 
 std::wstring utf8ToWide(const std::string& s) {
     if (s.empty()) return L"";
-    int n = MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()),
+    if (s.size() > static_cast<size_t>(std::numeric_limits<int>::max()))
+        return {};
+    const int length = static_cast<int>(s.size());
+    int n = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, s.data(), length,
                                 nullptr, 0);
+    if (n <= 0) return {};
     std::wstring w(static_cast<size_t>(n), L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), w.data(), n);
+    if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, s.data(), length,
+                            w.data(), n) != n)
+        return {};
     return w;
 }
 
 std::string wideToUtf8(const std::wstring& w) {
     if (w.empty()) return "";
-    int n = WideCharToMultiByte(CP_UTF8, 0, w.data(), static_cast<int>(w.size()),
+    if (w.size() > static_cast<size_t>(std::numeric_limits<int>::max()))
+        return {};
+    const int length = static_cast<int>(w.size());
+    int n = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, w.data(), length,
                                 nullptr, 0, nullptr, nullptr);
+    if (n <= 0) return {};
     std::string s(static_cast<size_t>(n), '\0');
-    WideCharToMultiByte(CP_UTF8, 0, w.data(), static_cast<int>(w.size()), s.data(),
-                        n, nullptr, nullptr);
+    if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, w.data(), length,
+                            s.data(), n, nullptr, nullptr) != n)
+        return {};
     return s;
 }
 
@@ -64,11 +76,15 @@ Color hexToColor(const std::string& s, Color dflt) {
         if (c >= '0' && c <= '9') return c - '0';
         if (c >= 'a' && c <= 'f') return c - 'a' + 10;
         if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-        return 0;
+        return -1;
     };
-    return { static_cast<uint8_t>(hx(h[0]) * 16 + hx(h[1])),
-             static_cast<uint8_t>(hx(h[2]) * 16 + hx(h[3])),
-             static_cast<uint8_t>(hx(h[4]) * 16 + hx(h[5])) };
+    const int r0 = hx(h[0]), r1 = hx(h[1]), g0 = hx(h[2]),
+              g1 = hx(h[3]), b0 = hx(h[4]), b1 = hx(h[5]);
+    if (r0 < 0 || r1 < 0 || g0 < 0 || g1 < 0 || b0 < 0 || b1 < 0)
+        return dflt;
+    return { static_cast<uint8_t>(r0 * 16 + r1),
+             static_cast<uint8_t>(g0 * 16 + g1),
+             static_cast<uint8_t>(b0 * 16 + b1) };
 }
 
 std::string colorToHex(const Color& c) {
@@ -159,6 +175,27 @@ bool jsonUnsigned(const Json& value, uint32_t max, uint32_t& result) {
         std::floor(number) != number)
         return false;
     result = static_cast<uint32_t>(number);
+    return true;
+}
+
+bool jsonInteger(const Json& value, int min, int max, int& result) {
+    if (value.type() != Json::Type::Number) return false;
+    const double number = value.asNumber();
+    if (!std::isfinite(number) || std::floor(number) != number ||
+        number < min || number > max)
+        return false;
+    result = static_cast<int>(number);
+    return true;
+}
+
+bool jsonFloat(const Json& value, float min, float max, float& result) {
+    if (value.type() != Json::Type::Number) return false;
+    const double number = value.asNumber();
+    if (!std::isfinite(number) || number < min || number > max)
+        return false;
+    const float converted = static_cast<float>(number);
+    if (!std::isfinite(converted)) return false;
+    result = converted;
     return true;
 }
 
@@ -348,8 +385,10 @@ Config loadConfig() {
         }
     }
 
-    cfg.schemaVersion =
-        static_cast<int>(j["schemaVersion"].asNumber(kConfigSchemaVersion));
+    int schemaVersion = kConfigSchemaVersion;
+    if (jsonInteger(j["schemaVersion"], 1, std::numeric_limits<int>::max(),
+                    schemaVersion))
+        cfg.schemaVersion = schemaVersion;
     if (cfg.schemaVersion < 1) cfg.schemaVersion = 1;
     if (cfg.schemaVersion > kConfigSchemaVersion) {
         configWarning(
@@ -362,11 +401,11 @@ Config loadConfig() {
     if (j.contains("fontFamily"))
         cfg.fontFamily = utf8ToWide(j["fontFamily"].asString());
     if (j.contains("fontSize"))
-        cfg.fontSize = static_cast<float>(j["fontSize"].asNumber(cfg.fontSize));
+        jsonFloat(j["fontSize"], 6.0f, 96.0f, cfg.fontSize);
     if (j.contains("fontLigatures"))
         cfg.fontLigatures = j["fontLigatures"].asBool(cfg.fontLigatures);
     if (j.contains("scrollback"))
-        cfg.scrollback = static_cast<int>(j["scrollback"].asNumber(cfg.scrollback));
+        jsonInteger(j["scrollback"], 0, 1000000, cfg.scrollback);
     if (j.contains("workspaceRoot"))
         cfg.workspaceRoot = utf8ToWide(j["workspaceRoot"].asString());
     // hooks.{sessionStart,sessionExit,appExit}
@@ -399,7 +438,11 @@ Config loadConfig() {
                     profile.host = std::move(legacyHost);
                 }
                 profile.name = utf8ToWide(host["name"].asString());
-                profile.port = static_cast<int>(host["port"].asNumber(22));
+                int port = 22;
+                if (host.contains("port") &&
+                    !jsonInteger(host["port"], 1, 65535, port))
+                    continue;
+                profile.port = port;
                 profile.identityFile = utf8ToWide(host["identityFile"].asString());
                 if (profile.name.empty()) profile.name = sshProfileTarget(profile);
                 if (validSshHost(profile.host) && validSshUser(profile.user) &&
@@ -527,11 +570,10 @@ Config loadConfig() {
     if (j.contains("filesPanelVisible"))
         cfg.filesPanelVisible = j["filesPanelVisible"].asBool(false);
     if (j.contains("sidebarWidth"))
-        cfg.sidebarWidth = static_cast<float>(
-            j["sidebarWidth"].asNumber(cfg.sidebarWidth));
+        jsonFloat(j["sidebarWidth"], 144.0f, 640.0f, cfg.sidebarWidth);
     if (j.contains("filesPanelWidth"))
-        cfg.filesPanelWidth = static_cast<float>(
-            j["filesPanelWidth"].asNumber(cfg.filesPanelWidth));
+        jsonFloat(j["filesPanelWidth"], 144.0f, 640.0f,
+                  cfg.filesPanelWidth);
     if (j.contains("splitUseWorkspaceDir"))
         cfg.splitUseWorkspaceDir = j["splitUseWorkspaceDir"].asBool(false);
     if (j.contains("powerShellHistoryPerProject"))
@@ -593,8 +635,9 @@ Config loadConfig() {
         for (const Json& p : j["favoriteProjects"].items())
             if (p.type() == Json::Type::String && !p.asString().empty())
                 cfg.favoriteProjects.push_back(utf8ToWide(p.asString()));
-    cfg.settingsPage =
-        std::clamp(static_cast<int>(j["settingsPage"].asNumber(0)), 0, 3);
+    int settingsPage = 0;
+    if (jsonInteger(j["settingsPage"], 0, 3, settingsPage))
+        cfg.settingsPage = settingsPage;
 
     if (cfg.shell.empty()) cfg.shell = L"cmd.exe";
     if (cfg.fontFamily.empty()) cfg.fontFamily = L"Cascadia Mono";
@@ -651,12 +694,18 @@ void saveFontFamily(const std::wstring& family) {
 // leave a truncated JSON file behind.
 bool writeFileAtomic(const std::wstring& path, const std::string& content) {
     const std::wstring tmp = path + L".tmp";
+    bool writeOk = false;
     {
         std::ofstream f(tmp.c_str(), std::ios::binary | std::ios::trunc);
-        if (!f) return false;
-        f.write(content.data(), static_cast<std::streamsize>(content.size()));
-        f.flush();
-        if (!f.good()) return false;
+        if (f) {
+            f.write(content.data(), static_cast<std::streamsize>(content.size()));
+            f.flush();
+            writeOk = f.good();
+        }
+    }
+    if (!writeOk) {
+        DeleteFileW(tmp.c_str());
+        return false;
     }
     if (!MoveFileExW(tmp.c_str(), path.c_str(),
                      MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {

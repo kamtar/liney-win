@@ -3,7 +3,9 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <atomic>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace liney {
@@ -48,31 +50,59 @@ std::wstring capture(const std::wstring& commandLine, const std::wstring& cwd,
         workDir, &si, &pi);
 
     CloseHandle(writePipe);  // we only read; child owns its copy
-    if (input) {
-        CloseHandle(inputRead);  // the child owns its inherited read end
-        if (!input->empty()) {
-            const char* data = input->data();
-            size_t remaining = input->size();
-            while (remaining > 0) {
-                DWORD written = 0;
-                const DWORD chunk = static_cast<DWORD>(
-                    std::min<size_t>(remaining, 64 * 1024));
-                if (!WriteFile(inputWrite, data, chunk, &written, nullptr) ||
-                    written == 0)
-                    break;
-                data += written;
-                remaining -= written;
-            }
-        }
-        CloseHandle(inputWrite);  // EOF tells sftp that its batch is complete
-    }
+    if (input) CloseHandle(inputRead);  // the child owns its inherited read end
     if (!launched) {
         CloseHandle(readPipe);
-        if (input) {
-            // The handles were not inherited after a failed launch.
-            // inputRead was already closed above; inputWrite is closed too.
-        }
+        if (input) CloseHandle(inputWrite);
         return L"";
+    }
+
+    // Feed stdin concurrently with stdout/stderr capture. A synchronous write
+    // on the caller thread can otherwise deadlock when the child fills the
+    // output pipe before consuming a large batch, and it also bypasses the
+    // capture timeout while the child is not reading.
+    std::atomic<bool> inputWriteOk{true};
+    std::atomic<bool> inputWriterDone{true};
+    std::thread inputWriter;
+    if (input) {
+        if (input->empty()) {
+            CloseHandle(inputWrite);  // EOF tells sftp that its batch is complete
+            inputWrite = nullptr;
+        } else {
+            const HANDLE writerHandle = inputWrite;
+            inputWrite = nullptr;
+            inputWriterDone = false;
+            try {
+                inputWriter = std::thread([writerHandle, input, &inputWriteOk,
+                                           &inputWriterDone] {
+                    const char* data = input->data();
+                    size_t remaining = input->size();
+                    while (remaining > 0) {
+                        DWORD written = 0;
+                        const DWORD chunk = static_cast<DWORD>(
+                            std::min<size_t>(remaining, 64 * 1024));
+                        if (!WriteFile(writerHandle, data, chunk, &written,
+                                       nullptr) ||
+                            written == 0) {
+                            inputWriteOk = false;
+                            break;
+                        }
+                        data += written;
+                        remaining -= written;
+                    }
+                    CloseHandle(writerHandle);
+                    inputWriterDone = true;
+                });
+            } catch (...) {
+                CloseHandle(writerHandle);
+                TerminateProcess(pi.hProcess, ERROR_CANCELLED);
+                WaitForSingleObject(pi.hProcess, 2000);
+                CloseHandle(readPipe);
+                CloseHandle(pi.hProcess);
+                CloseHandle(pi.hThread);
+                return L"";
+            }
+        }
     }
 
     constexpr size_t kMaxCaptureBytes = 4 * 1024 * 1024;
@@ -80,13 +110,17 @@ std::wstring capture(const std::wstring& commandLine, const std::wstring& cwd,
     char buf[4096];
     const ULONGLONG deadline = GetTickCount64() + timeoutMs;
     bool timedOut = false;
+    bool captureOk = true;
     for (;;) {
         DWORD available = 0;
-        if (PeekNamedPipe(readPipe, nullptr, 0, nullptr, &available, nullptr) &&
-            available > 0) {
+        const bool pipeReadable = PeekNamedPipe(
+            readPipe, nullptr, 0, nullptr, &available, nullptr) != FALSE;
+        if (pipeReadable && available > 0) {
             DWORD read = 0;
             const DWORD wanted = available < sizeof(buf) ? available : sizeof(buf);
-            if (ReadFile(readPipe, buf, wanted, &read, nullptr) && read > 0) {
+            if (!ReadFile(readPipe, buf, wanted, &read, nullptr) || read == 0)
+                captureOk = false;
+            else {
                 const size_t room = kMaxCaptureBytes - out.size();
                 out.append(buf, read < room ? read : room);
             }
@@ -99,6 +133,13 @@ std::wstring capture(const std::wstring& commandLine, const std::wstring& cwd,
             break;
         }
     }
+
+    if (inputWriter.joinable()) {
+        if (!inputWriterDone.load())
+            CancelSynchronousIo(inputWriter.native_handle());
+        inputWriter.join();
+    }
+
     // Drain bytes written immediately before process exit.
     for (;;) {
         DWORD available = 0;
@@ -116,7 +157,7 @@ std::wstring capture(const std::wstring& commandLine, const std::wstring& cwd,
     GetExitCodeProcess(pi.hProcess, &code);
     CloseHandle(pi.hProcess);
     CloseHandle(pi.hThread);
-    if (ok) *ok = (!timedOut && code == 0);
+    if (ok) *ok = (!timedOut && captureOk && inputWriteOk.load() && code == 0);
 
     if (out.empty()) return L"";
     int wlen = MultiByteToWideChar(CP_UTF8, 0, out.data(),

@@ -1,11 +1,14 @@
 #include "vt/Terminal.h"
 
+#include <limits>
+
 #include <windows.h>  // MultiByteToWideChar for title/pwd UTF-8 -> UTF-16
 
 namespace liney {
 
 // Append one Unicode scalar as UTF-16 (our Cell stores std::wstring on Windows).
 static void appendUtf16(uint32_t cp, std::wstring& out) {
+    if (cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF)) cp = 0xFFFD;
     if (cp <= 0xFFFF) {
         out.push_back(static_cast<wchar_t>(cp));
     } else {
@@ -35,7 +38,10 @@ static GhosttyPoint viewportPoint(int vx, int vy) {
 }
 
 bool Terminal::create(int cols, int rows, int scrollback) {
-    if (cols <= 0 || rows <= 0) return false;
+    if (cols <= 0 || rows <= 0 ||
+        cols > std::numeric_limits<uint16_t>::max() ||
+        rows > std::numeric_limits<uint16_t>::max())
+        return false;
     if (scrollback < 0) scrollback = 0;
 
     GhosttyTerminalOptions opts{};
@@ -75,6 +81,7 @@ void Terminal::setPtyWriter(PtyWriter writer) {
 }
 
 void Terminal::write(const char* data, size_t len) {
+    if (!data || len == 0) return;
     std::lock_guard<std::mutex> lock(mutex_);
     oscParser_.feed(data, len);
     auto events = oscParser_.drain();
@@ -125,7 +132,10 @@ std::vector<SemanticEvent> Terminal::drainSemanticEvents() {
 
 void Terminal::resize(int cols, int rows, int cellWidthPx, int cellHeightPx) {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (terminal_ && cols > 0 && rows > 0) {
+    if (terminal_ && cols > 0 && rows > 0 &&
+        cols <= std::numeric_limits<uint16_t>::max() &&
+        rows <= std::numeric_limits<uint16_t>::max() && cellWidthPx >= 0 &&
+        cellHeightPx >= 0) {
         ghostty_terminal_resize(
             terminal_, static_cast<uint16_t>(cols), static_cast<uint16_t>(rows),
             static_cast<uint32_t>(cellWidthPx),
@@ -225,13 +235,16 @@ bool Terminal::snapshotInto(Grid& grid) {
                     graphemeBuf_.resize(glen);
                     // GRAPHEMES_BUF takes the buffer pointer directly (see
                     // Ghostling main.c), not its address.
-                    ghostty_render_state_row_cells_get(
+                    const bool gotGraphemes =
+                        ghostty_render_state_row_cells_get(
                         rowCells_,
                         GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_BUF,
-                        graphemeBuf_.data());
-                    cell.ch.clear();
-                    for (uint32_t i = 0; i < glen; ++i)
-                        appendUtf16(graphemeBuf_[i], cell.ch);
+                        graphemeBuf_.data()) == GHOSTTY_SUCCESS;
+                    if (gotGraphemes) {
+                        cell.ch.clear();
+                        for (uint32_t i = 0; i < glen; ++i)
+                            appendUtf16(graphemeBuf_[i], cell.ch);
+                    }
                 }
                 ++x;
             }
@@ -302,12 +315,17 @@ bool Terminal::snapshotInto(Grid& grid) {
 }
 
 static std::wstring utf8ToWide(const uint8_t* p, size_t len) {
-    if (!p || len == 0) return {};
-    const int n = MultiByteToWideChar(CP_UTF8, 0, reinterpret_cast<const char*>(p),
-                                      static_cast<int>(len), nullptr, 0);
+    if (!p || len == 0 || len > std::numeric_limits<int>::max()) return {};
+    const int sourceLength = static_cast<int>(len);
+    const int n = MultiByteToWideChar(
+        CP_UTF8, MB_ERR_INVALID_CHARS, reinterpret_cast<const char*>(p),
+        sourceLength, nullptr, 0);
+    if (n <= 0) return {};
     std::wstring w(static_cast<size_t>(n), L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, reinterpret_cast<const char*>(p),
-                        static_cast<int>(len), w.data(), n);
+    if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+                            reinterpret_cast<const char*>(p), sourceLength,
+                            w.data(), n) != n)
+        return {};
     return w;
 }
 

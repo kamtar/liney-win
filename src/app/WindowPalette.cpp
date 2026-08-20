@@ -522,6 +522,10 @@ void Window::drawCommandPalette() {
     const float x = (static_cast<float>(client.right) - width) * 0.5f;
     const float y = metrics_.tabBarH() + 24.0f;
     const std::vector<int> visible = filteredPaletteActions();
+    if (visible.empty())
+        paletteSelected_ = 0;
+    else if (paletteSelected_ >= visible.size())
+        paletteSelected_ = visible.size() - 1;
     const size_t count = std::min<size_t>(visible.size(), 8);
     const size_t displayRows = std::max<size_t>(count, 1);
     const size_t start = paletteSelected_ >= count && count > 0

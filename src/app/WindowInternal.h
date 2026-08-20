@@ -6,6 +6,7 @@
 
 #include <windows.h>
 
+#include <limits>
 #include <string>
 
 #include "render/Cell.h"
@@ -49,20 +50,31 @@ inline std::wstring homeDir() {
 
 inline std::string wideToUtf8(const std::wstring& w) {
     if (w.empty()) return "";
-    int n = WideCharToMultiByte(CP_UTF8, 0, w.data(), static_cast<int>(w.size()),
+    if (w.size() > static_cast<size_t>(std::numeric_limits<int>::max()))
+        return {};
+    const int length = static_cast<int>(w.size());
+    int n = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, w.data(), length,
                                 nullptr, 0, nullptr, nullptr);
+    if (n <= 0) return {};
     std::string s(static_cast<size_t>(n), '\0');
-    WideCharToMultiByte(CP_UTF8, 0, w.data(), static_cast<int>(w.size()), s.data(),
-                        n, nullptr, nullptr);
+    if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, w.data(), length,
+                            s.data(), n, nullptr, nullptr) != n)
+        return {};
     return s;
 }
 
 inline std::wstring utf8ToWide(const std::string& s) {
     if (s.empty()) return L"";
-    int n = MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()),
+    if (s.size() > static_cast<size_t>(std::numeric_limits<int>::max()))
+        return {};
+    const int length = static_cast<int>(s.size());
+    int n = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, s.data(), length,
                                 nullptr, 0);
+    if (n <= 0) return {};
     std::wstring w(static_cast<size_t>(n), L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), w.data(), n);
+    if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, s.data(), length,
+                            w.data(), n) != n)
+        return {};
     return w;
 }
 

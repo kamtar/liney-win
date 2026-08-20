@@ -6,6 +6,8 @@ namespace liney {
 
 bool versionNewer(const std::string& remote, const std::string& local);
 
+bool isValidSha256(const std::string& digest);
+
 // Accept only installer assets belonging to this repository. WinHTTP follows
 // GitHub's subsequent redirect to its asset CDN; arbitrary hosts are rejected.
 bool parseTrustedInstallerUrl(const std::wstring& url, std::wstring& host,

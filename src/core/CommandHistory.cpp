@@ -3,8 +3,10 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cwctype>
 #include <fstream>
+#include <limits>
 #include <mutex>
 #include <sstream>
 
@@ -28,6 +30,27 @@ std::wstring lower(std::wstring value) {
     return value;
 }
 
+bool jsonInteger(const Json& value, int& result) {
+    if (value.type() != Json::Type::Number) return false;
+    const double number = value.asNumber();
+    if (!std::isfinite(number) || std::floor(number) != number ||
+        number < static_cast<double>(std::numeric_limits<int>::min()) ||
+        number > static_cast<double>(std::numeric_limits<int>::max()))
+        return false;
+    result = static_cast<int>(number);
+    return true;
+}
+
+bool jsonTimestamp(const Json& value, unsigned long long& result) {
+    if (value.type() != Json::Type::Number) return false;
+    const double number = value.asNumber();
+    if (!std::isfinite(number) || std::floor(number) != number ||
+        number < 0.0 || number >= 18446744073709551616.0)
+        return false;
+    result = static_cast<unsigned long long>(number);
+    return true;
+}
+
 void boundHistory(const std::wstring& path) {
     WIN32_FILE_ATTRIBUTE_DATA data{};
     if (!GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &data)) return;
@@ -36,6 +59,7 @@ void boundHistory(const std::wstring& path) {
     std::ifstream in(path.c_str(), std::ios::binary);
     if (!in) return;
     in.seekg(-static_cast<std::streamoff>(kMaxHistoryBytes / 2), std::ios::end);
+    if (!in) return;
     std::string tail; std::getline(in, tail); // discard a partial JSON line
     std::ostringstream rest; rest << in.rdbuf();
     writeFileAtomic(path, rest.str());
@@ -76,8 +100,8 @@ std::vector<HistoryEntry> searchCommandHistory(const std::wstring& query,
         HistoryEntry entry;
         entry.command = utf8ToWide(j["command"].asString());
         entry.cwd = utf8ToWide(j["cwd"].asString());
-        entry.exitCode = static_cast<int>(j["exitCode"].asNumber(0));
-        entry.timestamp = static_cast<unsigned long long>(j["timestamp"].asNumber(0));
+        jsonInteger(j["exitCode"], entry.exitCode);
+        jsonTimestamp(j["timestamp"], entry.timestamp);
         if (needle.empty() || lower(entry.command).find(needle) != std::wstring::npos)
             matches.push_back(std::move(entry));
     }

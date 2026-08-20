@@ -10,6 +10,8 @@
 #include <string>
 #include <vector>
 
+#include "core/Update.h"
+
 namespace liney {
 
 namespace {
@@ -65,11 +67,24 @@ done:
     return ok;
 }
 
-bool validSha256(std::string digest) {
-    if (digest.size() != 64) return false;
-    for (char c : digest)
-        if (!std::isxdigit(static_cast<unsigned char>(c))) return false;
-    return true;
+bool readResponseBody(HINTERNET request, std::string& result,
+                     size_t maximumBytes) {
+    result.clear();
+    for (;;) {
+        DWORD available = 0;
+        if (!WinHttpQueryDataAvailable(request, &available)) return false;
+        if (available == 0) return true;
+        if (result.size() > maximumBytes ||
+            available > maximumBytes - result.size())
+            return false;
+
+        std::string chunk(available, '\0');
+        DWORD read = 0;
+        if (!WinHttpReadData(request, chunk.data(), available, &read) ||
+            read == 0)
+            return false;
+        result.append(chunk.data(), read);
+    }
 }
 
 } // namespace
@@ -77,6 +92,7 @@ bool validSha256(std::string digest) {
 std::string httpsGet(const std::wstring& host, const std::wstring& path,
                      const std::wstring& bearerToken) {
     std::string result;
+    if (host.empty() || path.empty()) return result;
     HINTERNET session = WinHttpOpen(L"liney-win/1.0",
                                     WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
                                     WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS,
@@ -115,22 +131,7 @@ std::string httpsGet(const std::wstring& host, const std::wstring& path,
                 WINHTTP_NO_HEADER_INDEX) || status < 200 || status >= 300)
             ok = false;
     }
-    if (ok) {
-        DWORD avail = 0;
-        do {
-            avail = 0;
-            if (!WinHttpQueryDataAvailable(request, &avail) || avail == 0) break;
-            std::string chunk(avail, '\0');
-            DWORD read = 0;
-            if (!WinHttpReadData(request, chunk.data(), avail, &read)) break;
-            chunk.resize(read);
-            if (result.size() + chunk.size() > kMaxJsonBytes) {
-                result.clear();
-                break;
-            }
-            result += chunk;
-        } while (avail > 0);
-    }
+    if (ok && !readResponseBody(request, result, kMaxJsonBytes)) result.clear();
 
     WinHttpCloseHandle(request);
     WinHttpCloseHandle(connect);
@@ -175,23 +176,8 @@ std::string httpsPostJson(const std::wstring& host, const std::wstring& path,
                        WINHTTP_NO_HEADER_INDEX) ||
             status < 200 || status >= 300)
             ok = false;
-        while (ok) {
-            DWORD available = 0;
-            if (!WinHttpQueryDataAvailable(request, &available) || available == 0)
-                break;
-            if (result.size() + available > kMaxJsonBytes) {
-                result.clear();
-                break;
-            }
-            std::string chunk(available, '\0');
-            DWORD read = 0;
-            if (!WinHttpReadData(request, chunk.data(), available, &read)) {
-                result.clear();
-                break;
-            }
-            chunk.resize(read);
-            result += chunk;
-        }
+        if (ok && !readResponseBody(request, result, kMaxJsonBytes))
+            result.clear();
     }
     if (request) WinHttpCloseHandle(request);
     if (connect) WinHttpCloseHandle(connect);
@@ -202,7 +188,7 @@ std::string httpsPostJson(const std::wstring& host, const std::wstring& path,
 bool httpsDownload(const std::wstring& host, const std::wstring& path,
                    const std::wstring& outFile,
                    const std::string& expectedSha256) {
-    if (!validSha256(expectedSha256)) return false;
+    if (!isValidSha256(expectedSha256)) return false;
     bool ok = false;
     unsigned long long totalRead = 0;
     unsigned long long expectedBytes = 0;
@@ -247,19 +233,22 @@ bool httpsDownload(const std::wstring& host, const std::wstring& path,
             if (f) {
                 ok = true;
                 DWORD avail = 0;
-                do {
-                    avail = 0;
-                    if (!WinHttpQueryDataAvailable(request, &avail) || avail == 0)
+                for (;;) {
+                    if (!WinHttpQueryDataAvailable(request, &avail)) {
+                        ok = false;
                         break;
+                    }
+                    if (avail == 0) break;
                     std::string chunk(avail, '\0');
                     DWORD read = 0;
-                    if (!WinHttpReadData(request, chunk.data(), avail, &read)) {
+                    if (!WinHttpReadData(request, chunk.data(), avail, &read) ||
+                        read == 0) {
                         ok = false; break;
                     }
                     f.write(chunk.data(), static_cast<std::streamsize>(read));
                     if (!f) { ok = false; break; }
                     totalRead += read;
-                } while (avail > 0);
+                }
             }
         }
     }

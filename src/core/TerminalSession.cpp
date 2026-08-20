@@ -4,6 +4,7 @@
 #include <cwctype>
 #include <cstdlib>
 #include <atomic>
+#include <limits>
 #include <memory>
 #include <thread>
 #include <vector>
@@ -17,14 +18,34 @@ namespace liney {
 
 namespace {
 std::string utf8FromWide(const wchar_t* text, size_t len) {
-    if (!text || len == 0) return {};
+    if (!text || len == 0 || len > std::numeric_limits<int>::max()) return {};
+    const int sourceLength = static_cast<int>(len);
     const int bytes = WideCharToMultiByte(
-        CP_UTF8, 0, text, static_cast<int>(len), nullptr, 0, nullptr, nullptr);
+        CP_UTF8, WC_ERR_INVALID_CHARS, text, sourceLength, nullptr, 0,
+        nullptr, nullptr);
     if (bytes <= 0) return {};
     std::string result(static_cast<size_t>(bytes), '\0');
-    WideCharToMultiByte(CP_UTF8, 0, text, static_cast<int>(len), result.data(),
-                        bytes, nullptr, nullptr);
+    if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, text, sourceLength,
+                            result.data(), bytes, nullptr, nullptr) != bytes)
+        return {};
     return result;
+}
+
+void eraseLastUtf8CodePoint(std::string& value) {
+    if (value.empty()) return;
+    size_t pos = value.size() - 1;
+    while (pos > 0 &&
+           (static_cast<unsigned char>(value[pos]) & 0xC0) == 0x80)
+        --pos;
+    value.resize(pos);
+}
+
+bool validTerminalSize(int cols, int rows) {
+    // ConPty receives SHORT dimensions, so reject values that would wrap on
+    // the transport boundary instead of passing a different size downstream.
+    return cols > 0 && rows > 0 &&
+           cols <= std::numeric_limits<short>::max() &&
+           rows <= std::numeric_limits<short>::max();
 }
 
 bool decodeInlineImage(const SemanticEvent& event, InlineImage& image) {
@@ -153,6 +174,7 @@ TerminalSession::~TerminalSession() {
 
 bool TerminalSession::start(const std::wstring& shell, const std::wstring& cwd,
                             int cols, int rows, int scrollback) {
+    if (!validTerminalSize(cols, rows)) return false;
     if (!networkWorkingDirectoryReady(cwd)) return false;
     ssh_.reset();
     serialProfile_.reset();
@@ -181,7 +203,7 @@ bool TerminalSession::start(const std::wstring& shell, const std::wstring& cwd,
 
 bool TerminalSession::startSerial(const SerialProfile& profile, int cols,
                                   int rows, int scrollback) {
-    if (cols <= 0 || rows <= 0) return false;
+    if (!validTerminalSize(cols, rows)) return false;
     ssh_.reset();
     cwd_.clear();
     // shellCommand() is intentionally not populated for serial sessions: it
@@ -226,7 +248,7 @@ bool TerminalSession::startSerial(const SerialProfile& profile, int cols,
 bool TerminalSession::startSsh(const SshProfile& profile, int cols, int rows,
                                int scrollback,
                                const SshCredentials& credentials) {
-    if (!validSshProfile(profile) || cols <= 0 || rows <= 0) return false;
+    if (!validSshProfile(profile) || !validTerminalSize(cols, rows)) return false;
     serialProfile_.reset();
     serialTextLine_.clear();
     ssh_.reset();
@@ -382,7 +404,7 @@ void TerminalSession::submitSerialText() {
 }
 
 void TerminalSession::capturePromptInput(const char* data, size_t len) {
-    if (!atPrompt_) return;
+    if (!atPrompt_ || !data || len == 0) return;
     for (size_t i = 0; i < len; ++i) {
         const unsigned char ch = static_cast<unsigned char>(data[i]);
         if (promptEscape_) {
@@ -392,7 +414,7 @@ void TerminalSession::capturePromptInput(const char* data, size_t len) {
         }
         if (ch == 0x1b) { promptEscape_ = true; continue; }
         if (ch == 0x08 || ch == 0x7f) {
-            if (!promptInputUtf8_.empty()) promptInputUtf8_.pop_back();
+            eraseLastUtf8CodePoint(promptInputUtf8_);
         } else if (ch == '\r' || ch == '\n') {
             // Keep the accepted line until OSC 133;C starts command output.
             pendingCommandStartedAt_ = std::chrono::steady_clock::now();
@@ -576,7 +598,7 @@ void TerminalSession::toggleBookmarkLastCommand() {
 
 void TerminalSession::resize(int cols, int rows, int cellWidthPx,
                              int cellHeightPx) {
-    if (!active_ || cols <= 0 || rows <= 0) return;
+    if (!active_ || !validTerminalSize(cols, rows)) return;
     // Same grid but a new cell pixel size (font/DPI change) still needs to
     // reach the core: pixel metrics feed mouse reporting and size reports.
     if (cols == cols_ && rows == rows_ && cellWidthPx == cellW_ &&

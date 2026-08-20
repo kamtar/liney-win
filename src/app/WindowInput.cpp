@@ -3,6 +3,7 @@
 
 #include <imm.h>
 
+#include <limits>
 #include <string>
 
 #include "core/RenderSignal.h"
@@ -91,13 +92,16 @@ void Window::onFilePanelWheel(int delta) {
 }
 
 void Window::sendUtf16(const wchar_t* s, size_t len) {
-    if (len == 0) return;
-    int bytes = WideCharToMultiByte(CP_UTF8, 0, s, static_cast<int>(len),
+    if (!s || len == 0) return;
+    if (len > static_cast<size_t>(std::numeric_limits<int>::max())) return;
+    const int length = static_cast<int>(len);
+    int bytes = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, s, length,
                                     nullptr, 0, nullptr, nullptr);
     if (bytes <= 0) return;
     std::string utf8(static_cast<size_t>(bytes), '\0');
-    WideCharToMultiByte(CP_UTF8, 0, s, static_cast<int>(len), utf8.data(), bytes,
-                        nullptr, nullptr);
+    if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, s, length, utf8.data(),
+                            bytes, nullptr, nullptr) != bytes)
+        return;
     sendToActive(utf8.data(), utf8.size());
 }
 
