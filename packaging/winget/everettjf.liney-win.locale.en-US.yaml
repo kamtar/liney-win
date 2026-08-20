@@ -1,12 +1,12 @@
 # WinGet default-locale manifest (template).
 PackageIdentifier: everettjf.liney-win
-PackageVersion: 0.10.9
+PackageVersion: 0.10.10
 PackageLocale: en-US
 Publisher: everettjf
 PackageName: liney-win
 License: Apache-2.0
 ShortDescription: Windows terminal workspace (repos / worktrees / splits / sidebar).
-PackageUrl: https://github.com/everettjf/liney-win
+PackageUrl: https://github.com/kamtar/liney-win
 Tags:
   - terminal
   - workspace

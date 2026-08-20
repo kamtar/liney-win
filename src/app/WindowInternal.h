@@ -13,7 +13,7 @@
 
 namespace liney {
 
-inline constexpr const wchar_t* kAppVersion = L"0.10.9";  // sync with AppxManifest
+inline constexpr const wchar_t* kAppVersion = L"0.10.10";  // sync with AppxManifest
 
 // Stable, high-contrast project colors used by the workspace rail and tab
 // indicators. The assignment is persisted per project path by Window.

@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [0.10.10] - 2026-08-20
+
+- Hardened GitHub update validation, checksum fallback, installer selection,
+  and Authenticode trust checks.
+- Hardened terminal, ConPTY, process, SSH, configuration, and workspace
+  lifecycle handling against malformed input and shutdown races.
+
 ## [0.10.9] - 2026-08-20
 
 - Added a visible split add control for quickly adding folders or choosing SSH
