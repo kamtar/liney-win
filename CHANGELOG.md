@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+## [0.10.9] - 2026-08-20
+
+- Added a visible split add control for quickly adding folders or choosing SSH
+  and serial connections.
+- Restyled the SSH, Serial and Archive sections to match the Workspace header
+  while preserving their collapsible behavior.
+- Moved project archive and restore actions fully into the project context menu.
+- Improved the sidebar add-control outline and alignment.
+
 ## [0.10.8] - 2026-08-13
 
 - Fixed GitHub-distributed updates downloading the verified installer with a
