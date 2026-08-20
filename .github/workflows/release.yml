@@ -117,16 +117,23 @@ jobs:
         run: powershell -ExecutionPolicy Bypass -File tools\smoke-test.ps1 -Exe build-ghostty\Liney.exe
 
       - name: Download previous stable payload for upgrade test
+        id: previous-release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           $previous = gh release list --exclude-drafts --exclude-pre-releases --limit 1 --json tagName --jq '.[0].tagName'
-          if (-not $previous) { throw 'No previous stable release found' }
+          if (-not $previous) {
+            Write-Host 'No previous stable release found; skipping upgrade test.'
+            'available=false' >> $env:GITHUB_OUTPUT
+            exit 0
+          }
           New-Item -ItemType Directory -Force previous-release | Out-Null
           gh release download $previous --pattern liney-portable.zip --dir previous-release
+          'available=true' >> $env:GITHUB_OUTPUT
 
       - name: Installer, portable, and uninstall smoke test
+        if: steps.previous-release.outputs.available == 'true'
         shell: pwsh
         run: powershell -ExecutionPolicy Bypass -File tools\installer-smoke.ps1 -Installer dist\liney-setup.exe -PreviousPortableZip previous-release\liney-portable.zip -PortableZip dist\liney-portable.zip -ScratchRoot $env:RUNNER_TEMP\liney-package-smoke
 
