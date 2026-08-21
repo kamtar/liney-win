@@ -1199,11 +1199,7 @@ void Window::updateChromeAccessibility() {
                    row.repo < static_cast<int>(workspace_.repos().size())) {
             const Repo& repo = workspace_.repos()[row.repo];
             info.name = repo.name;
-            info.helpText = repo.isGit()
-                                ? L"Git project. Invoke to expand or collapse worktrees."
-                                : L"Project folder. Invoke to open a terminal.";
-            info.expandable = repo.isGit();
-            info.expanded = repo.expanded;
+            info.helpText = L"Project folder. Invoke to open a terminal.";
         } else if (row.kind == RowKind::Worktree && row.repo >= 0 &&
                    row.repo < static_cast<int>(workspace_.repos().size())) {
             const Repo& repo = workspace_.repos()[row.repo];

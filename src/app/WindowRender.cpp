@@ -176,6 +176,10 @@ void Window::drawLeftSidebar(const Rect& r) {
     y += rowH + 4.0f;
 
     auto& repos = workspace_.repos();
+    // Keep Git projects in the Workspace list, but do not expose their
+    // worktree children in the left sidebar. Git remains available through
+    // the project context menu, command palette, and terminal commands.
+    const bool showGitWorktreesInSidebar = false;
     const int activeRepoCount = static_cast<int>(std::count_if(
         repos.begin(), repos.end(), [&](const Repo& repo) {
             return !isProjectArchived(repo.path);
@@ -224,8 +228,8 @@ void Window::drawLeftSidebar(const Rect& r) {
         renderer_->fillRoundedRect(r.x + 4.0f, y + 5.0f,
                                    3.0f * dpiScale_, rowH - 10.0f,
                                    1.5f * dpiScale_, projectColor);
-        // Git repositories disclose worktrees; archived rows stay compact.
-        if (repo.isGit())
+        // Git worktree disclosure is intentionally hidden from this sidebar.
+        if (repo.isGit() && showGitWorktreesInSidebar)
             renderer_->drawText(repo.expanded && !archived ? L"v" : L">",
                                 r.x + pad, y + tDY, metrics_.cellW * 1.5f, th,
                                 archived ? kArchivedProjectColor : uiTheme_.dim,
@@ -261,7 +265,7 @@ void Window::drawLeftSidebar(const Rect& r) {
         sidebarRows_.push_back(std::move(projectRow));
         y += rowH;
 
-        if (repo.expanded && !archived) {
+        if (showGitWorktreesInSidebar && repo.expanded && !archived) {
             for (int w = 0; w < static_cast<int>(repo.worktrees.size()); ++w) {
                 if (y > r.bottom()) break;
                 const Worktree& wt = repo.worktrees[w];

@@ -868,13 +868,10 @@ void Window::onMouseDown(int xi, int yi) {
                 auto& repos = workspace_.repos();
                 if (row.repo < 0 || row.repo >= static_cast<int>(repos.size())) return;
                 Repo& repo = repos[row.repo];
-                if (repo.isGit() && !row.archived) {
-                    repo.expanded = !repo.expanded;
-                    if (repo.expanded) workspace_.loadWorktrees(repo);
-                } else {
-                    rememberRecentProject(repo.path);
-                    openWorkspaceSession(repo.path, repo.path);
-                }
+                rememberRecentProject(repo.path);
+                openWorkspaceSession(repo.path, repo.path,
+                                     repo.isGit() && !row.archived
+                                         ? repo.path : L"");
                 break;
             }
             case RowKind::Worktree: {
